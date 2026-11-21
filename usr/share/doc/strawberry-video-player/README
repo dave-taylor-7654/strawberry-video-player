@@ -22,6 +22,8 @@ Keys (Cardputer keyboard, or any attached USB keyboard)
   1-8              display aspect ratio (HDMI): 16:9 16:10 4:3 5:4 1:1 2.35:1 2.21:1 21:9
                    (the shape of your display's panel; see below; remembered)
   h                help (on the LCD while HDMI is playing)
+  t                test patterns on HDMI: press to start, press again for the next one, and
+                   after the last one the video resumes where it was (see below)
   i                HDMI diagnostics page on the LCD (toggle): the display's name, the active
                    mode, colour range and bit depth, audio formats, link status, CEC address,
                    native and supported modes. It also shows for a few seconds whenever HDMI
@@ -78,6 +80,20 @@ Environment variables
   STRAWBERRY_VLC_ARGS=         extra options appended to the VLC command line (testing)
   STRAWBERRY_HDMI_MODE=        HDMI mode WxH@Hz (default 1920x1080@30: the display's 1080p mode
                                with the nearest refresh rate; many displays offer only 50/60 Hz)
+
+Test patterns (key t, HDMI only)
+  1 Colour bars (75% bars over an 11-step grey strip)
+  2 Grey steps 0, 16, 32 ... 240, 255 plus a ramp: blocks that look identical show crushed
+    blacks or clipped whites (a limited/full range mismatch)
+  3 Geometry: a 1:1 square and a circle; they must look square and round (keys 1-8 set the
+    display's aspect ratio while this is showing)
+  4 Convergence: white grid in a red ring of cells, a dot in every cell
+  5 Audio + sync: a 30 second 960x540 loop with a 1 kHz tone and a flash on the left, then the
+    right, then both; picture and sound should land together
+  The patterns are in /usr/share/strawberry-video-player/patterns/ and are made by
+  tools/make-patterns.py in the source repository.
+  Note: stills may be sent with a different colour range than video. Check the Colour line of
+  the HDMI diagnostics page (key i) while a pattern is up.
 
 Configuration file (optional): ~/.config/strawberry-video-player.conf
   hdmi_mode = 1920x1080@30     # same as STRAWBERRY_HDMI_MODE
