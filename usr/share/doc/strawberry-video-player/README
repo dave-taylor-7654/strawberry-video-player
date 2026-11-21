@@ -22,6 +22,10 @@ Keys (Cardputer keyboard, or any attached USB keyboard)
   1-8              display aspect ratio (HDMI): 16:9 16:10 4:3 5:4 1:1 2.35:1 2.21:1 21:9
                    (the shape of your display's panel; see below; remembered)
   h                help (on the LCD while HDMI is playing)
+  i                HDMI diagnostics page on the LCD (toggle): the display's name, the active
+                   mode, colour range and bit depth, audio formats, link status, CEC address,
+                   native and supported modes. It also shows for a few seconds whenever HDMI
+                   is connected and until playback starts.
   Esc              quit
 
 Usage

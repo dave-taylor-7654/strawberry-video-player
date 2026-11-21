@@ -31,7 +31,9 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
+DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
+DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
@@ -120,7 +122,7 @@ KEYMAP = {
     ec.KEY_Q: "pause", ec.KEY_SPACE: "pause", ec.KEY_ENTER: "pause", ec.KEY_KPENTER: "pause",
     ec.KEY_W: "back", ec.KEY_E: "fwd",
     ec.KEY_S: "vol_down", ec.KEY_D: "vol_up", ec.KEY_A: "mute",
-    ec.KEY_H: "help", ec.KEY_L: "loop", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
+    ec.KEY_H: "help", ec.KEY_I: "diag", ec.KEY_L: "loop", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
     ec.KEY_1: "aspect0", ec.KEY_2: "aspect1", ec.KEY_3: "aspect2", ec.KEY_4: "aspect3",
     ec.KEY_5: "aspect4", ec.KEY_6: "aspect5", ec.KEY_7: "aspect6", ec.KEY_8: "aspect7",
     ec.KEY_KP1: "aspect0", ec.KEY_KP2: "aspect1", ec.KEY_KP3: "aspect2", ec.KEY_KP4: "aspect3",
@@ -141,6 +143,7 @@ HELP_LINES = [
     ("a", "mute"),
     ("l", "loop one / all"),
     ("1-8", "aspect ratio"),
+    ("i", "HDMI diagnostics"),
     ("Esc", "quit"),
 ]
 
@@ -411,6 +414,148 @@ def hms(sec):
     return "%02d:%02d:%02d" % (sec // 3600, sec // 60 % 60, sec % 60)
 
 
+# ---------------------------------------------------------------- HDMI diagnostics
+VIC_NAMES = {1: "VGA", 2: "480p", 3: "480p", 4: "720p60", 5: "1080i60", 16: "1080p60",
+             17: "576p", 18: "576p", 19: "720p50", 20: "1080i50", 31: "1080p50",
+             32: "1080p24", 33: "1080p25", 34: "1080p30", 63: "1080p120", 93: "4Kp24",
+             94: "4Kp25", 95: "4Kp30", 96: "4Kp50", 97: "4Kp60"}
+
+
+def parse_edid(d):
+    """What the display said about itself (EDID base block + CEA extension)."""
+    out = {}
+    if len(d) < 128 or d[:8] != b"\x00\xff\xff\xff\xff\xff\xff\x00":
+        return out
+    m = (d[8] << 8) | d[9]
+    out["maker"] = "".join(chr(((m >> sh) & 31) + 64) for sh in (10, 5, 0))
+    out["product"] = "%04X" % (d[10] | d[11] << 8)
+    out["week"], out["year"] = d[16], 1990 + d[17]
+    out["size_cm"] = (d[21], d[22])
+    for i in range(4):
+        b = d[54 + 18 * i:72 + 18 * i]
+        if b[:3] == b"\x00\x00\x00" and b[3] == 0xFC:
+            out["name"] = b[5:18].decode("latin1").split("\n")[0].strip()
+    if len(d) >= 256 and d[126]:
+        e = d[128:256]
+        out["underscan"] = bool(e[3] & 0x80)
+        i, end = 4, min(e[2], 127)
+        vics = []
+        while i < end:
+            tag, ln = e[i] >> 5, e[i] & 31
+            blk = e[i + 1:i + 1 + ln]
+            if tag == 2:
+                for v in blk:
+                    vics.append((v & 127, bool(v & 128)))
+            elif tag == 3 and blk[:3] == b"\x03\x0c\x00" and len(blk) >= 5:
+                pa = (blk[3] << 8) | blk[4]
+                out["cec"] = "%d.%d.%d.%d" % (pa >> 12, (pa >> 8) & 15, (pa >> 4) & 15, pa & 15)
+            i += ln + 1
+        out["vics"] = vics
+    return out
+
+
+class HdmiInfo:
+    """Gathers what the HDMI connection reports: the display's EDID, its audio
+    capabilities (ELD), and the active mode / colour settings (kmsprint, if installed)."""
+
+    def __init__(self):
+        self.cache, self.at = None, 0.0
+
+    @staticmethod
+    def _connector():
+        for p in sorted(glob.glob("/sys/class/drm/card*-HDMI-A-*")):
+            try:
+                if open(p + "/status").read().strip() == "connected":
+                    return p
+            except OSError:
+                pass
+        return None
+
+    @staticmethod
+    def _audio():
+        for f in sorted(glob.glob("/proc/asound/card*/eld#*")):
+            try:
+                t = open(f).read()
+            except OSError:
+                continue
+            if "monitor_name" not in t:
+                continue
+            kv = {}
+            for line in t.splitlines():
+                if "\t" in line:
+                    k, v = line.split("\t", 1)
+                    kv[k.strip()] = v.strip()
+            if "sad0_coding_type" not in kv:
+                return "none"
+            fmt = re.sub(r"\[.*?\]\s*", "", kv.get("sad0_coding_type", "")) or "?"
+            rates = [r for r in re.sub(r"\[.*?\]\s*", "", kv.get("sad0_rates", "")).split() if r.isdigit()]
+            khz = "/".join(("%g" % (int(r) / 1000.0)) for r in rates)
+            return "%s %sch %s kHz" % (fmt, kv.get("sad0_channels", "?"), khz)
+        return None
+
+    @staticmethod
+    def _drm():
+        """Active mode and connector properties from kmsprint -p (optional tool)."""
+        res = {}
+        try:
+            r = subprocess.run(["kmsprint", "-p"], capture_output=True, timeout=4)
+        except (OSError, subprocess.SubprocessError):
+            return res
+        text = r.stdout.decode(errors="replace")
+        m = re.search(r"Crtc \d+ \(\d+\) (\d+x\d+)@([\d.]+)", text)
+        if m:
+            res["mode"] = "%s @ %g Hz" % (m.group(1), float(m.group(2)))
+        for key, name in (("link", "link-status"), ("bpc", "max bpc"),
+                          ("range", "Broadcast RGB"), ("cs", "Colorspace")):
+            m = re.search(r"^\s+%s \(\d+\) = (\d+)(?: \(([^)]*)\))?" % re.escape(name), text, re.M)
+            if m:
+                res[key] = (m.group(2) or m.group(1)).strip()
+        return res
+
+    def snapshot(self, force=False):
+        """Rows for the diagnostics page: [(label, value, ok)], refreshed every 2 s."""
+        if not force and self.cache is not None and time.time() - self.at < 2.0:
+            return self.cache
+        rows = []
+        con = self._connector()
+        if not con:
+            rows = [("Display", "not connected", False)]
+        else:
+            try:
+                e = parse_edid(open(con + "/edid", "rb").read())
+            except OSError:
+                e = {}
+            dr = self._drm()
+            name = e.get("name") or "unknown"
+            rows.append(("Display", "%s (%s %s)" % (name, e.get("maker", "?"), e.get("product", "?")), True))
+            rows.append(("Mode", dr.get("mode", "n/a"), "mode" in dr))
+            colour = []
+            if "bpc" in dr:
+                colour.append("%s bpc" % dr["bpc"])
+            if "range" in dr:
+                colour.append(re.sub(r"\s*(\d+):(\d+)", r" \1-\2", dr["range"]))
+            rows.append(("Colour", "  ".join(colour) or "n/a", bool(colour)))
+            audio = self._audio()
+            rows.append(("Audio", audio if audio else "n/a", audio not in (None, "none")))
+            rows.append(("Link", "%s   CEC %s" % (dr.get("link", "n/a"), e.get("cec", "n/a")),
+                         dr.get("link", "Good") == "Good"))
+            vics = e.get("vics", [])
+            if vics:
+                native = [VIC_NAMES.get(v, "VIC%d" % v) for v, nat in vics if nat]
+                names = []
+                for v, _ in vics:
+                    n = VIC_NAMES.get(v)
+                    if n and n not in names:
+                        names.append(n)
+                rows.append(("Native", native[0] if native else "n/a", True))
+                rows.append(("Modes", " ".join(names[:6]), True))
+            if e.get("year"):
+                rows.append(("Made", "%d week %d   %s" % (e["year"], e.get("week", 0),
+                                                           "underscan ok" if e.get("underscan") else ""), True))
+        self.cache, self.at = rows, time.time()
+        return rows
+
+
 class LcdInfo:
     """While HDMI plays, show an info page on the built-in LCD by drawing straight
     into its framebuffer (saved first, restored on close)."""
@@ -422,6 +567,8 @@ class LcdInfo:
         self.stride = self.W * 2
         self.swap = False                       # True if the panel is BGR565
         self.help_until = 0.0
+        self.diag_until = 0.0                   # HDMI diagnostics page showing until then
+        self.hdmi = HdmiInfo()
         self.note = ""                          # short message shown for a few seconds
         self.note_until = 0.0
         self.last = None
@@ -475,6 +622,18 @@ class LcdInfo:
 
     def notice(self, text, seconds=3.0):
         self.note, self.note_until = text, time.time() + seconds
+        self.last = None
+
+    def hdmi_line(self, rows):
+        """'CX101   1920x1080 @ 60 Hz' for the player page."""
+        vals = {label: value for label, value, _ in rows}
+        name = vals.get("Display", "no display").split(" (")[0]
+        mode = vals.get("Mode", "")
+        return name + ("   " + mode if mode and mode != "n/a" else "")
+
+    def toggle_diag(self, seconds=60):
+        self.diag_until = 0.0 if time.time() < self.diag_until else time.time() + seconds
+        self.hdmi.cache = None
         self.last = None
 
     def show_help(self, seconds=8):
@@ -551,27 +710,38 @@ class LcdInfo:
             return
         helping = time.time() < self.help_until
         note = self.note if time.time() < self.note_until else ""
-        state = (helping, title, status, pos, length, volume, muted, note)
+        rows = self.hdmi.snapshot()
+        diag = tuple(rows) if (not helping and time.time() < self.diag_until) else None
+        link = self.hdmi_line(rows)
+        state = (helping, title, status, pos, length, volume, muted, note, diag, link)
         if state == self.last:
             return
         self.last = state
         from PIL import Image, ImageDraw
         img = Image.new("RGB", (self.W, self.H), (0, 0, 0))
         d = ImageDraw.Draw(img)
-        if helping:
+        if diag is not None:
+            d.text((14, 22), "HDMI diagnostics", fill=RED, font=self.font(16), anchor="ls")
+            for i, (label, value, ok) in enumerate(diag[:8]):
+                y = 42 + i * 15
+                d.text((14, y), label, fill=GREY, font=self.font(12), anchor="ls")
+                d.text((78, y), self.fit(value, 13, 236), fill=WHITE if ok else RED,
+                       font=self.font(13), anchor="ls")
+            d.text((14, 164), "i: back", fill=GREY, font=self.font(12), anchor="ls")
+        elif helping:
             d.text((14, 22), "Strawberry Video Player", fill=RED, font=self.font(16), anchor="ls")
             for i, (keys, desc) in enumerate(HELP_LINES):
-                y = 40 + i * 14
+                y = 36 + i * 13
                 d.text((14, y), keys, fill=WHITE, font=self.font(12), anchor="ls")
                 d.text((100, y), desc, fill=WHITE, font=self.font(12), anchor="ls")
         else:
             d.text((14, 24), self.fit(title, 16, 292), fill=WHITE, font=self.font(16), anchor="ls")
             d.text((14, 51), "HDMI Output", fill=RED, font=self.font(16), anchor="ls")
-            d.text((14, 78), "EDID: " + self.edid, fill=WHITE, font=self.font(15), anchor="ls")
+            d.text((14, 78), self.fit(link, 15, 292), fill=WHITE, font=self.font(15), anchor="ls")
             if note:
                 d.text((14, 103), self.fit(note, 12, 292), fill=RED, font=self.font(12), anchor="ls")
             else:
-                d.text((14, 103), "Tab: LCD  s: -vol  d: +vol  q: pause  h: help",
+                d.text((14, 103), "Tab:Swap screens  i:HDMI diagnostics  h:Help",
                        fill=WHITE, font=self.font(12), anchor="ls")
             x0, x1, y = 14, 306, 119
             d.rectangle([x0, y, x1, y + 2], fill=GREY)
@@ -1178,6 +1348,8 @@ class App:
             self.idx = self.files.index(first_file)
         self.loop_one = True            # default: loop the current video
         self.aspect = initial_aspect()  # display shape, keys 1-8
+        self.diag_auto = False          # diagnostics page is up because HDMI was just acquired
+        self.diag_first = 0.0
         self.volume = 100               # percent
         self.muted = False
         self.lease = DesktopLease()
@@ -1357,6 +1529,13 @@ class App:
                 self.engine.say("\n".join(f"{k:<10}{v}" for k, v in HELP_LINES), 8000)
             else:
                 self.info.show_help()
+        elif act == "diag":
+            if self.engine.name == "vlc" and self.output == "hdmi":
+                self.diag_auto = False                # the user is in charge now
+                self.info.toggle_diag()
+                self.update_info()
+            else:
+                self.say("HDMI diagnostics show on the LCD while HDMI plays", 2500)
         elif act.startswith("aspect"):
             self.set_aspect(ASPECTS[int(act[6:])])
         elif act == "loop":
@@ -1406,10 +1585,34 @@ class App:
                 else:
                     self.advance(1)
 
+    def begin_diag(self):
+        """HDMI was just acquired: show the diagnostics page for DIAG_AT_ACQUIRE
+        seconds, and longer if playback has not begun by then."""
+        self.diag_auto, self.diag_first = True, 0.0
+        dbg("diag: HDMI acquired")
+
+    def auto_diag(self):
+        if not self.diag_auto:
+            return
+        now = time.time()
+        if not self.diag_first:                      # clock starts when the page can first show
+            self.diag_first = now
+            dbg("diag: showing")
+        shown = now - self.diag_first
+        playing = self.last_pos is not None and self.last_pos > 0.2
+        if shown >= DIAG_AT_ACQUIRE and (playing or shown >= DIAG_MAX_WAIT):
+            self.diag_auto = False
+            self.info.diag_until = 0.0
+            self.info.last = None
+            dbg("diag: done after %.1fs (playing=%s)" % (shown, playing))
+        else:
+            self.info.diag_until = now + 5.0         # keep it up
+
     def update_info(self):
         """Keep the LCD info page in step while HDMI plays; release the LCD otherwise."""
         if self.engine and self.engine.name == "vlc" and self.output == "hdmi":
             if self.info.open():
+                self.auto_diag()
                 f = self.current()
                 title = os.path.splitext(os.path.basename(f))[0] if f else ""
                 self.info.draw(title, "Paused" if self.paused else "Playing",
@@ -1436,6 +1639,8 @@ class App:
             self.quitting = True
             return
         self.load(start=float(pos), paused=paused, announce=False)
+        if self.output == "hdmi" and self.engine and self.engine.name == "vlc":
+            self.begin_diag()
         self.say(note or ("Output: HDMI" if self.output == "hdmi" else "Output: LCD"), 1500)
 
     def fall_back_from_vlc(self):
@@ -1473,6 +1678,8 @@ class App:
                     self.info.close()
                     end = 0
                 self.load(start=self.start_at)
+                if self.output == "hdmi" and self.engine and self.engine.name == "vlc":
+                    self.begin_diag()
                 started = True
             self.hold_splash(end)
         if not started:
