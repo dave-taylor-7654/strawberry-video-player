@@ -1,37 +1,51 @@
 Strawberry Video Player
 =======================
 
-Offline video player, HDMI diagnostic tool and test pattern generator for AV professionals.
+A video player, HDMI diagnostic tool and test pattern generator for AV professionals,
+for the CardputerZero.
 
-Plays the videos in ~/Videos (alphabetical, non-recursive).
+Runs on the CardputerZero (Raspberry Pi CM0, Debian 13 arm64), with no network needed.
+
+  Offline video player:       plays the videos in ~/Videos alphabetically and loops (loop one,
+                              loop all). It shows on HDMI when a display is connected,
+                              otherwise on the built-in 320x170 LCD, and sound follows the
+                              picture.
+  HDMI diagnostic tool:       key i shows what the display reports (name, maker, active mode,
+                              color range, audio formats, link status, CEC address) on the LCD.
+  Test pattern generator:     key t shows color bars, gray steps, geometry, a convergence
+                              grid, and an audio and sync test on HDMI.
+
+Keys (Cardputer keyboard, or any attached USB keyboard)
+  Tab               swap LCD / HDMI playback
+  q, Space, Return  play / pause
+  z, x, Del         previous video
+  c, f              next video
+  w / e             back / forward 30 s
+  s / d             volume down / up
+  a                 mute
+  l                 loop one / loop all
+  1-8               display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9
+  h                 help (on the LCD while HDMI plays)
+  t                 test patterns on HDMI on / off; z x c f choose the pattern: color bars,
+                    gray steps, geometry, convergence, audio + sync
+  i                 HDMI diagnostics on the LCD: display name, mode, color range, audio,
+                    link, CEC address
+  Esc               quit
+
+  More about the keys:
+  - Previous / next wrap around the list. Loop starts as "loop one".
+  - 1-8 set the shape of your display's panel and are remembered (see "Configuration file").
+  - t brings the video back where it was when you switch the patterns off, and the patterns
+    stay up until you change or switch them off. They also work when there are no videos.
+  - The i page also shows for a few seconds whenever HDMI is connected, until playback starts.
+    It lists the active mode, color range and bit depth, audio formats, link status, CEC
+    address, and the display's native and supported modes.
 
 Output
   HDMI connected at start -> HDMI, sound over HDMI
   otherwise               -> built-in LCD, sound over the onboard speaker
   If HDMI is unplugged during playback the video moves to the LCD at the
   same position.
-
-Keys (Cardputer keyboard, or any attached USB keyboard)
-  Tab              switch LCD <-> HDMI
-  q  Space  Return play / pause
-  z  x  Del        previous video (wraps)
-  c  f             next video (wraps)
-  w                back 30 seconds
-  e                forward 30 seconds
-  s  d             volume down / up
-  a                mute
-  l                toggle loop one video / loop all videos (default: loop one)
-  1-8              display aspect ratio (HDMI): 16:9 16:10 4:3 5:4 1:1 2.35:1 2.21:1 21:9
-                   (the shape of your display's panel; see below; remembered)
-  h                help (on the LCD while HDMI is playing)
-  t                test patterns on HDMI: on / off (the video resumes where it was). While a
-                   pattern is up, z x choose the previous and c f the next pattern; it stays
-                   until you change or switch it off (see below)
-  i                HDMI diagnostics page on the LCD (toggle): the display's name, the active
-                   mode, color range and bit depth, audio formats, link status, CEC address,
-                   native and supported modes. It also shows for a few seconds whenever HDMI
-                   is connected and until playback starts.
-  Esc              quit
 
 Usage
   strawberry-video-player              play ~/Videos
