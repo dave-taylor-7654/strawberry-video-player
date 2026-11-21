@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.6.1"
+VERSION = "2.7.2"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -132,7 +132,7 @@ KEYMAP = {
 ASPECTS = ["16:9", "16:10", "4:3", "5:4", "1:1", "2.35:1", "2.21:1", "21:9"]
 # Key t toggles these on HDMI; z/x and c/f choose the pattern. They never change on their own.
 PATTERN_DIR = "/usr/share/strawberry-video-player/patterns"
-PATTERNS = [("Colour bars", "1-colour-bars.png"), ("Grey steps", "2-grey-steps.png"),
+PATTERNS = [("Color bars", "1-color-bars.png"), ("Gray steps", "2-gray-steps.png"),
             ("Geometry 1:1", "3-geometry.png"), ("Convergence", "4-convergence.png"),
             ("Audio + sync", "5-audio-sync.mp4")]
 REPEATABLE = {"back", "fwd", "vol_up", "vol_down"}
@@ -395,7 +395,7 @@ class Backlight:
 # ---------------------------------------------------------------- LCD info page
 RED = (250, 32, 33)
 WHITE = (255, 255, 255)
-GREY = (126, 126, 126)
+GRAY = (126, 126, 126)
 
 
 def edid_name():
@@ -461,7 +461,7 @@ def parse_edid(d):
 
 class HdmiInfo:
     """Gathers what the HDMI connection reports: the display's EDID, its audio
-    capabilities (ELD), and the active mode / colour settings (kmsprint, if installed)."""
+    capabilities (ELD), and the active mode / color settings (kmsprint, if installed)."""
 
     def __init__(self):
         self.cache, self.at = None, 0.0
@@ -534,12 +534,12 @@ class HdmiInfo:
             name = e.get("name") or "unknown"
             rows.append(("Display", "%s (%s %s)" % (name, e.get("maker", "?"), e.get("product", "?")), True))
             rows.append(("Mode", dr.get("mode", "n/a"), "mode" in dr))
-            colour = []
+            color = []
             if "bpc" in dr:
-                colour.append("%s bpc" % dr["bpc"])
+                color.append("%s bpc" % dr["bpc"])
             if "range" in dr:
-                colour.append(re.sub(r"\s*(\d+):(\d+)", r" \1-\2", dr["range"]))
-            rows.append(("Colour", "  ".join(colour) or "n/a", bool(colour)))
+                color.append(re.sub(r"\s*(\d+):(\d+)", r" \1-\2", dr["range"]))
+            rows.append(("Color", "  ".join(color) or "n/a", bool(color)))
             audio = self._audio()
             rows.append(("Audio", audio if audio else "n/a", audio not in (None, "none")))
             rows.append(("Link", "%s   CEC %s" % (dr.get("link", "n/a"), e.get("cec", "n/a")),
@@ -674,7 +674,7 @@ class LcdInfo:
     ICONS = ("/usr/share/icons/hicolor/256x256/apps/strawberry-video-player.png",
              "/usr/share/APPLaunch/share/images/strawberry-video-player.png")
 
-    def page(self, kind, directory=None):
+    def page(self, kind, directory=None, hdmi_ok=True, note=""):
         """Full-screen splash or 'no videos' page (needs open())."""
         if self.fd is None:
             return
@@ -692,23 +692,38 @@ class LcdInfo:
                         break
                     except (OSError, ValueError):
                         continue
-                d.text((138, 78), "Strawberry", fill=WHITE, font=self.font(24), anchor="ls")
-                d.text((138, 104), "Video Player", fill=WHITE, font=self.font(24), anchor="ls")
             d.text((138, 82), "Strawberry", fill=WHITE, font=self.font(24), anchor="ls")
             d.text((138, 108), "Video Player", fill=WHITE, font=self.font(24), anchor="ls")
             d.text((138, 128), "Version " + VERSION, fill=RED, font=self.font(15), anchor="ls")
-            d.text((138, 152), "www.videostrawberry.com", fill=GREY, font=self.font(13), anchor="ls")
+            d.text((138, 152), "www.videostrawberry.com", fill=GRAY, font=self.font(13), anchor="ls")
         else:
             home = os.path.expanduser("~")
             shown = ("~" + directory[len(home):]) if directory.startswith(home) else directory
-            d.text((14, 34), "No videos found", fill=RED, font=self.font(22), anchor="ls")
-            d.text((14, 64), "Copy some video files into:", fill=WHITE, font=self.font(15), anchor="ls")
-            d.text((14, 88), self.fit(shown, 18, 292), fill=WHITE, font=self.font(18), anchor="ls")
-            d.text((14, 118), "They start playing as soon as", fill=GREY, font=self.font(14), anchor="ls")
-            d.text((14, 136), "they appear.", fill=GREY, font=self.font(14), anchor="ls")
-            d.text((14, 160), "Esc: quit", fill=GREY, font=self.font(12), anchor="ls")
+            d.text((14, 32), "No videos found", fill=RED, font=self.font(22), anchor="ls")
+            d.text((14, 58), "Videos may be added to", fill=WHITE, font=self.font(15), anchor="ls")
+            d.text((14, 82), self.fit(shown, 18, 292), fill=WHITE, font=self.font(18), anchor="ls")
+            d.text((14, 101), "They play as soon as they appear.", fill=GRAY, font=self.font(13), anchor="ls")
+            edge = RED if hdmi_ok else GRAY
+            d.rounded_rectangle([14, 111, 306, 145], radius=6, outline=edge, width=2)
+            if hdmi_ok:
+                d.text((160, 134), "Press  t  for test patterns", fill=WHITE, font=self.font(18), anchor="ms")
+            else:
+                d.text((160, 134), "t: test patterns (needs HDMI)", fill=GRAY, font=self.font(15), anchor="ms")
+            if note:
+                d.text((14, 163), self.fit(note, 12, 292), fill=RED, font=self.font(12), anchor="ls")
+            else:
+                d.text((14, 163), "Esc: quit", fill=GRAY, font=self.font(12), anchor="ls")
         self.last = None
         self._blit(img)
+
+    def empty(self, directory, hdmi_ok=True):
+        """The 'no videos' page, redrawn only when something on it changes."""
+        note = self.note if time.time() < self.note_until else ""
+        state = ("empty", directory, hdmi_ok, note)
+        if self.fd is None or state == self.last:
+            return
+        self.page("empty", directory, hdmi_ok, note)
+        self.last = state
 
     def draw(self, title, status, pos, length, volume, muted):
         if self.fd is None:
@@ -729,10 +744,10 @@ class LcdInfo:
             d.text((14, 22), "HDMI diagnostics", fill=RED, font=self.font(16), anchor="ls")
             for i, (label, value, ok) in enumerate(diag[:8]):
                 y = 42 + i * 15
-                d.text((14, y), label, fill=GREY, font=self.font(12), anchor="ls")
+                d.text((14, y), label, fill=GRAY, font=self.font(12), anchor="ls")
                 d.text((78, y), self.fit(value, 13, 236), fill=WHITE if ok else RED,
                        font=self.font(13), anchor="ls")
-            d.text((14, 164), "i: back", fill=GREY, font=self.font(12), anchor="ls")
+            d.text((14, 164), "i: back", fill=GRAY, font=self.font(12), anchor="ls")
         elif helping:
             d.text((14, 22), "Strawberry Video Player", fill=RED, font=self.font(16), anchor="ls")
             for i, (keys, desc) in enumerate(HELP_LINES):
@@ -741,15 +756,16 @@ class LcdInfo:
                 d.text((100, y), desc, fill=WHITE, font=self.font(12), anchor="ls")
         else:
             d.text((14, 24), self.fit(title, 16, 292), fill=WHITE, font=self.font(16), anchor="ls")
-            d.text((14, 51), "HDMI Output", fill=RED, font=self.font(16), anchor="ls")
-            d.text((14, 78), self.fit(link, 15, 292), fill=WHITE, font=self.font(15), anchor="ls")
+            d.text((14, 48), "HDMI Output", fill=RED, font=self.font(16), anchor="ls")
+            d.text((14, 72), self.fit(link, 15, 292), fill=WHITE, font=self.font(15), anchor="ls")
             if note:
-                d.text((14, 103), self.fit(note, 12, 292), fill=RED, font=self.font(12), anchor="ls")
+                d.text((14, 98), self.fit(note, 12, 292), fill=RED, font=self.font(12), anchor="ls")
             else:
-                d.text((14, 103), "Tab:Swap screens  i:HDMI diagnostics  h:Help",
+                d.text((14, 90), "Tab:Swap screens  i:HDMI diagnostics",
                        fill=WHITE, font=self.font(12), anchor="ls")
+                d.text((14, 105), "t:Test patterns  h:Help", fill=WHITE, font=self.font(12), anchor="ls")
             x0, x1, y = 14, 306, 119
-            d.rectangle([x0, y, x1, y + 2], fill=GREY)
+            d.rectangle([x0, y, x1, y + 2], fill=GRAY)
             if length and pos is not None:
                 fill = int((x1 - x0) * min(1.0, max(0.0, pos / length)))
                 if fill > 0:
@@ -1457,6 +1473,8 @@ class App:
             self.engine.say(text, ms)
             if self.engine.name == "vlc":            # no OSD on HDMI: use the LCD page
                 self.info.notice(text, min(ms, 4000) / 1000.0)
+        elif not self.files:
+            self.info.notice(text, min(ms, 4000) / 1000.0)
 
     def current(self):
         return self.files[self.idx] if self.files else None
@@ -1509,7 +1527,10 @@ class App:
         if act == "quit":
             self.quitting = True
         elif act == "output":
-            self.switch_output("lcd" if self.output == "hdmi" else "hdmi")
+            if self.engine:                            # (nothing to move when no video is loaded)
+                self.switch_output("lcd" if self.output == "hdmi" else "hdmi")
+        elif act == "pattern":
+            self.next_pattern()
         elif not self.engine:
             return
         elif act == "pause":
@@ -1541,8 +1562,6 @@ class App:
                 self.engine.say("\n".join(f"{k:<10}{v}" for k, v in HELP_LINES), 8000)
             else:
                 self.info.show_help()
-        elif act == "pattern":
-            self.next_pattern()
         elif act == "diag":
             if self.engine.name == "vlc" and self.output == "hdmi":
                 self.diag_auto = False                # the user is in charge now
@@ -1562,10 +1581,22 @@ class App:
         if self.pattern >= 0:
             self.end_pattern()
             return
-        if not (self.engine.name == "vlc" and self.output == "hdmi"):
+        if self.engine is None:                       # no videos: bring HDMI up just for this
+            if not (hdmi_connected() and self.hdmi_backend == "vlc" and shutil.which("cvlc")):
+                self.say("Test patterns need HDMI", 3000)
+                return
+            self.output = "hdmi"
+            self.say("Starting HDMI...", 3000)
+            self.update_info()
+            if not self.start_engine():
+                self.say("Could not start HDMI", 3000)
+                return
+            self.resume = None
+        elif not (self.engine.name == "vlc" and self.output == "hdmi"):
             self.say("Test patterns need HDMI", 2000)
             return
-        self.resume = (self.engine.position() or self.last_pos or 0.0, self.paused)
+        else:
+            self.resume = (self.engine.position() or self.last_pos or 0.0, self.paused)
         self.pattern = self.last_pattern
         self.show_pattern()
 
@@ -1585,6 +1616,11 @@ class App:
     def end_pattern(self):
         pos, paused = self.resume or (0.0, False)
         self.pattern, self.resume = -1, None
+        if not self.files:                            # nothing to resume: HDMI off, desktop back
+            self.stop_engine()
+            self.say("Test patterns off", 2500)
+            self.update_info()
+            return
         self.load(start=float(pos), paused=paused, announce=False)
         self.say("Test patterns off", 1500)
 
@@ -1672,6 +1708,9 @@ class App:
                 else:
                     self.info.draw(title, "Paused" if self.paused else "Playing",
                                    self.last_pos, self.length, self.volume, self.muted)
+        elif self.engine is None and not self.files:
+            if self.info.open():
+                self.info.empty(self.dir, hdmi_ok=hdmi_connected() and self.hdmi_backend == "vlc")
         else:
             self.info.close()
 
@@ -1740,15 +1779,14 @@ class App:
                     self.begin_diag()
                 started = True
             self.hold_splash(end)
-        if not started:
-            if not self.files and not self.wait_for_videos():
-                self.info.close()
-                return 0
+        if not started and self.files:
             self.info.close()
             if not self.open_output():
                 log("could not start any player")
                 return 1
             self.load(start=self.start_at)
+        # no videos: the LCD keeps the "No videos found" page; key t starts HDMI test
+        # patterns, and playback starts by itself when videos appear (see housekeeping)
         self.prober.prefetch([f for f in self.files if f != self.current()])
         tick = 0
         last = time.time()
@@ -1792,32 +1830,6 @@ class App:
                         self.handle(self.engine.pump())    # keep the player's pipe drained
                     except OSError:
                         pass
-
-    def wait_for_videos(self):
-        """Show the 'no videos' page until something appears in the folder.
-        Returns False if the user quit."""
-        if not self.info.open():
-            log(f"no videos in {self.dir}")
-        else:
-            self.info.page("empty", self.dir)
-        last = 0.0
-        while not self.quitting:
-            self.backlight.hold()
-            for key, _ in self.sel.select(0.25):
-                kind, d = key.data
-                if kind == "kbd":
-                    try:
-                        if "quit" in self.kbd.read(d):
-                            return False
-                    except OSError:
-                        pass
-            if time.time() - last >= 1.0:
-                last = time.time()
-                self.files = scan(self.dir)
-                if self.files:
-                    self.idx = 0
-                    return True
-        return False
 
     def watchdog(self):
         """If playback stops advancing while not paused, the decoder has stalled:
@@ -1871,13 +1883,19 @@ class App:
             self.handle(self.engine.poll())
         self.watchdog()
         self.update_info()
-        if self.output == "hdmi" and not hdmi_connected():
+        if self.engine and self.output == "hdmi" and not hdmi_connected():
             self.switch_output("lcd", note="HDMI unplugged: LCD")
         if not self.files and tick % 2 == 0:
             self.files = scan(self.dir)
             if self.files:
                 self.idx = 0
-                self.load()
+                if self.pattern < 0:                 # (with a pattern up it starts when that ends)
+                    if not self.engine:
+                        self.info.close()
+                        if not self.open_output():
+                            self.quitting = True
+                            return
+                    self.load()
 
 
 def parse_time(text):

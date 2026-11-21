@@ -26,7 +26,7 @@ Keys (Cardputer keyboard, or any attached USB keyboard)
                    pattern is up, z x choose the previous and c f the next pattern; it stays
                    until you change or switch it off (see below)
   i                HDMI diagnostics page on the LCD (toggle): the display's name, the active
-                   mode, colour range and bit depth, audio formats, link status, CEC address,
+                   mode, color range and bit depth, audio formats, link status, CEC address,
                    native and supported modes. It also shows for a few seconds whenever HDMI
                    is connected and until playback starts.
   Esc              quit
@@ -83,8 +83,8 @@ Environment variables
                                with the nearest refresh rate; many displays offer only 50/60 Hz)
 
 Test patterns (key t, HDMI only)
-  1 Colour bars (75% bars over an 11-step grey strip)
-  2 Grey steps 0, 16, 32 ... 240, 255 plus a ramp: blocks that look identical show crushed
+  1 Color bars (75% bars over an 11-step gray strip)
+  2 Gray steps 0, 16, 32 ... 240, 255 plus a ramp: blocks that look identical show crushed
     blacks or clipped whites (a limited/full range mismatch)
   3 Geometry: a 1:1 square and a circle; they must look square and round (keys 1-8 set the
     display's aspect ratio while this is showing)
@@ -93,7 +93,7 @@ Test patterns (key t, HDMI only)
     right, then both; picture and sound should land together
   The patterns are in /usr/share/strawberry-video-player/patterns/ and are made by
   tools/make-patterns.py in the source repository.
-  Note: stills may be sent with a different colour range than video. Check the Colour line of
+  Note: stills may be sent with a different color range than video. Check the Color line of
   the HDMI diagnostics page (key i) while a pattern is up.
 
 Configuration file (optional): ~/.config/strawberry-video-player.conf

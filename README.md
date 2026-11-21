@@ -18,8 +18,8 @@ display is connected, otherwise on the built-in 320x170 LCD, and sound follows t
 | l | loop one / loop all |
 | 1-8 | display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9 |
 | h | help (on the LCD while HDMI plays) |
-| t | test patterns on HDMI on / off; z x c f choose the pattern: colour bars, grey steps, geometry, convergence, audio + sync |
-| i | HDMI diagnostics on the LCD: display name, mode, colour range, audio, link, CEC address |
+| t | test patterns on HDMI on / off; z x c f choose the pattern: color bars, gray steps, geometry, convergence, audio + sync |
+| i | HDMI diagnostics on the LCD: display name, mode, color range, audio, link, CEC address |
 | Esc | quit |
 
 ## Build and install

@@ -17,14 +17,14 @@ import wave
 from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1920, 1080
-WHITE, BLACK, RED, GREY = (255, 255, 255), (0, 0, 0), (250, 32, 33), (126, 126, 126)
+WHITE, BLACK, RED, GRAY = (255, 255, 255), (0, 0, 0), (250, 32, 33), (126, 126, 126)
 
 
 def font(size):
     return ImageFont.load_default(size=size)
 
 
-def colour_bars():
+def color_bars():
     im = Image.new("RGB", (W, H), BLACK)
     d = ImageDraw.Draw(im)
     bars = [(191, 191, 191), (191, 191, 0), (0, 191, 191), (0, 191, 0),
@@ -33,7 +33,7 @@ def colour_bars():
     top = int(H * 0.72)
     for i, c in enumerate(bars):
         d.rectangle([i * bw, 0, (i + 1) * bw - 1, top], fill=c)
-    # lower strip: 11 grey steps, 0..100 %
+    # lower strip: 11 gray steps, 0..100 %
     steps = 11
     sw = W / steps
     for i in range(steps):
@@ -42,20 +42,20 @@ def colour_bars():
     return im
 
 
-def grey_ramp():
+def gray_ramp():
     im = Image.new("RGB", (W, H), BLACK)
     d = ImageDraw.Draw(im)
     vals = list(range(0, 241, 16)) + [255]          # 0,16,...,240,255
     bw = 112
     x0 = (W - bw * len(vals)) // 2
-    d.text((W // 2, 90), "GREY STEPS: every block should be distinct", fill=WHITE,
+    d.text((W // 2, 90), "GRAY STEPS: every block should be distinct", fill=WHITE,
            font=font(44), anchor="mm")
     for i, v in enumerate(vals):
         x = x0 + i * bw
         d.rectangle([x, 200, x + bw - 1, 620], fill=(v, v, v))
         d.text((x + bw // 2, 660), str(v), fill=WHITE, font=font(34), anchor="mm")
     d.text((W // 2, 760), "0 and 16 look the same: blacks are crushed.   235, 240 and 255 look the same: whites are clipped.",
-           fill=GREY, font=font(30), anchor="mm")
+           fill=GRAY, font=font(30), anchor="mm")
     for x in range(x0, x0 + bw * len(vals)):                   # smooth ramp
         v = round(255 * (x - x0) / (bw * len(vals) - 1))
         d.line([(x, 840), (x, 980)], fill=(v, v, v))
@@ -82,7 +82,7 @@ def geometry():
     d.text((W // 2, 880), "The square must be square and the circle round.", fill=WHITE,
            font=font(34), anchor="mm")
     d.text((W // 2, 935), "If they look tall or wide, press 1-8 to set the display's aspect ratio.",
-           fill=GREY, font=font(30), anchor="mm")
+           fill=GRAY, font=font(30), anchor="mm")
     return im
 
 
@@ -126,7 +126,7 @@ def sync_frame(kind):
     d.text((W // 2, H - 100), "A tone (1 kHz) sounds with each flash: left, right, then both.",
            fill=ink(kind == "both"), font=font(32), anchor="mm")
     d.text((W // 2, H - 55), "Picture and sound should land together.",
-           fill=ink(kind == "both") if kind == "both" else GREY, font=font(30), anchor="mm")
+           fill=ink(kind == "both") if kind == "both" else GRAY, font=font(30), anchor="mm")
     return im
 
 
@@ -179,7 +179,7 @@ def audio_sync_clip(out, seconds=30):
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "patterns"
     os.makedirs(out, exist_ok=True)
-    for name, fn in (("1-colour-bars", colour_bars), ("2-grey-steps", grey_ramp),
+    for name, fn in (("1-color-bars", color_bars), ("2-gray-steps", gray_ramp),
                      ("3-geometry", geometry), ("4-convergence", convergence)):
         fn().save(os.path.join(out, name + ".png"), optimize=True)
         print("wrote", name + ".png")
