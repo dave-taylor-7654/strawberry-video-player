@@ -73,6 +73,13 @@ Environment variables
   STRAWBERRY_HDMI_MODE=        HDMI mode WxH@Hz (default 1920x1080@30: the display's 1080p mode
                                with the nearest refresh rate; many displays offer only 50/60 Hz)
 
+Configuration file (optional): ~/.config/strawberry-video-player.conf
+  hdmi_mode = 1920x1080@30     # same as STRAWBERRY_HDMI_MODE
+  display_aspect = 16:10       # same as STRAWBERRY_DISPLAY_ASPECT
+  Some monitors have a 16:10 (or 4:3) panel and stretch the 1920x1080 signal to fill it, so
+  everything looks too tall. Set display_aspect to the panel's shape: the player then
+  letterboxes the video inside the signal and the monitor's stretch makes it look right.
+
 Command line
   strawberry-video-player --start 11:40 FILE    start at a position (SECONDS or MM:SS)
 

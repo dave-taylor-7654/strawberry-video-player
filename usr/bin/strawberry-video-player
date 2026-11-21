@@ -31,8 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.3.8"
-HDMI_MODE = os.environ.get("STRAWBERRY_HDMI_MODE", "1920x1080@30")
+VERSION = "2.3.10"
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
@@ -44,6 +43,51 @@ UID = os.getuid()
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{UID}"
 PID = os.getpid()
 DEBUG = bool(os.environ.get("STRAWBERRY_DEBUG"))
+CONF = os.path.expanduser("~/.config/strawberry-video-player.conf")
+
+
+def conf_value(key, default=None):
+    """key = value lines in ~/.config/strawberry-video-player.conf (# comments)."""
+    try:
+        for line in open(CONF, encoding="utf-8"):
+            line = line.split("#", 1)[0].strip()
+            if "=" in line:
+                k, v = (x.strip() for x in line.split("=", 1))
+                if k == key and v:
+                    return v
+    except OSError:
+        pass
+    return default
+
+
+# 1080p30 by default (the display's 1080p mode with the nearest refresh rate).
+HDMI_MODE = os.environ.get("STRAWBERRY_HDMI_MODE") or conf_value("hdmi_mode", "1920x1080@30")
+
+
+def monitor_par():
+    """VLC --monitor-par value for a display whose panel is not 16:9. Some monitors
+    stretch the 16:9 signal over a 16:10 (or 4:3) panel, so everything looks too tall.
+    Telling VLC the pixel shape makes it letterbox/pillarbox inside the signal, and the
+    monitor's stretch then restores the right proportions. Setting: display_aspect = 16:10
+    (or STRAWBERRY_DISPLAY_ASPECT); unset or 16:9 means no correction."""
+    text = os.environ.get("STRAWBERRY_DISPLAY_ASPECT") or conf_value("display_aspect")
+    if not text:
+        return None
+    try:
+        from fractions import Fraction
+        if ":" in text:
+            w, h = text.split(":", 1)
+            panel = Fraction(w.strip()) / Fraction(h.strip())
+        else:
+            panel = Fraction(text.strip())
+        par = panel / Fraction(16, 9)                  # signal is 16:9 pixels
+        if not 0.4 < par < 2.5 or par == 1:
+            return None
+        par = par.limit_denominator(100)
+        return "%d:%d" % (par.numerator, par.denominator)
+    except (ValueError, ZeroDivisionError):
+        return None
+
 
 KEYMAP = {
     ec.KEY_Z: "prev", ec.KEY_X: "prev", ec.KEY_DELETE: "prev", ec.KEY_BACKSPACE: "prev",
@@ -824,6 +868,9 @@ class VlcEngine:
              # is used (many displays list only 50/60 Hz, so that is what they get).
              "--drm-vout-mode=" + HDMI_MODE,
              "--fullscreen"]
+        par = monitor_par()
+        if par:
+            c += ["--monitor-par=" + par]
         if self.mode == "sw":
             # this Pi build of VLC picks its hardware decoder by name, so naming the
             # software one is the only way to force it (--avcodec-hw=none does not)
