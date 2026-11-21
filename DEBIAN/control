@@ -1,0 +1,17 @@
+Package: strawberry-video-player
+Version: 2.3.3
+Section: video
+Priority: optional
+Architecture: all
+Depends: mpv, ffmpeg, vlc-bin, vlc-plugin-base, python3 (>= 3.9), python3-evdev, python3-pil, pulseaudio-utils | pipewire-pulse
+Recommends: polkitd | policykit-1, fonts-dejavu-core
+Maintainer: dave-taylor-7654 <167921850+dave-taylor-7654@users.noreply.github.com>
+Description: Strawberry Video Player for the Cardputer Zero
+ Plays the videos in ~/Videos in alphabetical order, looping. Shows on HDMI
+ when a display is connected and otherwise on the built-in LCD, with sound
+ following the picture. Keyboard: Tab LCD/HDMI, q/Space play-pause, z/x/Del
+ previous, c/f next, w/e skip 30 s, s/d volume, a mute, l loop, h help, Esc quit.
+ .
+ On HDMI the player can use VLC's hardware DRM output for smooth 1080p. That
+ needs permission to stop the desktop while playing; without it, HDMI plays in
+ a window on the desktop instead.

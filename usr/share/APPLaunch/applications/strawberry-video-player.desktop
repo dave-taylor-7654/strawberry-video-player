@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Strawberry Video Player
+Exec=/usr/bin/strawberry-video-player
+Terminal=false
+Icon=share/images/strawberry-video-player.png
+Type=Application
+Categories=AudioVideo;Video;Player;

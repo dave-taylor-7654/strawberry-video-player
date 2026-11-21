@@ -1,0 +1,80 @@
+Strawberry Video Player
+=======================
+
+Plays the videos in ~/Videos (alphabetical, non-recursive).
+
+Output
+  HDMI connected at start -> HDMI, sound over HDMI
+  otherwise               -> built-in LCD, sound over the onboard speaker
+  If HDMI is unplugged during playback the video moves to the LCD at the
+  same position.
+
+Keys (Cardputer keyboard, or any attached USB keyboard)
+  Tab              switch LCD <-> HDMI
+  q  Space  Return play / pause
+  z  x  Del        previous video (wraps)
+  c  f             next video (wraps)
+  w                back 30 seconds
+  e                forward 30 seconds
+  s  d             volume down / up
+  a                mute
+  l                toggle loop one video / loop all videos (default: loop one)
+  h                help (on the LCD while HDMI is playing)
+  Esc              quit
+
+Usage
+  strawberry-video-player              play ~/Videos
+  strawberry-video-player DIR          play DIR
+  strawberry-video-player FILE         play FILE's folder, starting at FILE
+
+How HDMI works
+  Preferred: VLC with Raspberry Pi's DRM video output. For files the Pi's hardware
+  decoder supports, it feeds the display directly (zero-copy), which is what makes
+  1080p smooth on this hardware. VLC needs the display to itself, so the desktop
+  (lightdm) is stopped while it plays and started again afterwards (about 10
+  seconds to come back). A small watcher restarts the desktop even if the player
+  is killed. The LCD shows an info page (title, EDID name, progress, volume) and
+  is kept awake while the player runs. There is no on-screen text on HDMI itself.
+
+  This needs permission to stop and start lightdm.service. The package does NOT
+  grant that by itself. To allow it, install a polkit rule such as:
+
+    polkit.addRule(function(action, subject) {
+        if (action.id == "org.freedesktop.systemd1.manage-units" &&
+            action.lookup("unit") == "lightdm.service" &&
+            (action.lookup("verb") == "stop" || action.lookup("verb") == "start") &&
+            subject.isInGroup("video")) { return polkit.Result.YES; }
+    });
+
+  in /usr/share/polkit-1/rules.d/50-strawberry-video-player.rules (as root).
+  Without permission the player plays HDMI in a window on the desktop (mpv,
+  software decoding), which works but is less smooth at 1080p.
+
+  Hardware or software decoding is chosen per file from its stream header
+  (ffprobe). The Pi's hardware decoder handles 8-bit 4:2:0 H.264, profiles up to
+  High, at level 4.2 or lower. Anything else (for example a level 5.1 encode with
+  10 reference frames, which shows a black or gray picture in hardware) is played
+  with the software decoder automatically: this works for 1080p24 at up to about
+  20 Mb/s but uses about 250% of the four cores, and switching between a hardware
+  file and a software file restarts VLC for a couple of seconds.
+
+  Encoding for the Pi (smoothest, lowest CPU): H.264, High profile or lower, level
+  4.1 or 4.2, 4 reference frames, 8-bit 4:2:0, 1080p24-30, up to ~20 Mb/s. With
+  ffmpeg:  -c:v libx264 -profile:v high -level 4.1 -refs 4 -pix_fmt yuv420p
+
+  LCD: mpv with software decoding and an early downscale to 320x170, with
+  on-screen messages.
+
+Environment variables
+  STRAWBERRY_DEBUG=1           log to stderr (player logs in $XDG_RUNTIME_DIR)
+  STRAWBERRY_HDMI_BACKEND=     vlc or mpv (desktop window); default: vlc if allowed
+  STRAWBERRY_HDMI_VO=          gpu|wlshm renderer for the mpv desktop-window mode
+  STRAWBERRY_VLC_ARGS=         extra options appended to the VLC command line (testing)
+
+Command line
+  strawberry-video-player --start 11:40 FILE    start at a position (SECONDS or MM:SS)
+
+Notes
+  Videos must be readable by the user running the player.
+  Memory: the display shares a CMA pool with the decoder. Raise it with
+  dtoverlay=vc4-kms-v3d,cma-128 in /boot/firmware/config.txt (recommended).
