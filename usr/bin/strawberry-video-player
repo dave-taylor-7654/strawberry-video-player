@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.6.0"
+VERSION = "2.6.1"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -130,7 +130,7 @@ KEYMAP = {
 }
 # Keys 1-8: the shape of the display (what its panel does with the 16:9 signal).
 ASPECTS = ["16:9", "16:10", "4:3", "5:4", "1:1", "2.35:1", "2.21:1", "21:9"]
-# Key t cycles through these on HDMI (then back to the video).
+# Key t toggles these on HDMI; z/x and c/f choose the pattern. They never change on their own.
 PATTERN_DIR = "/usr/share/strawberry-video-player/patterns"
 PATTERNS = [("Colour bars", "1-colour-bars.png"), ("Grey steps", "2-grey-steps.png"),
             ("Geometry 1:1", "3-geometry.png"), ("Convergence", "4-convergence.png"),
@@ -1356,6 +1356,7 @@ class App:
         self.aspect = initial_aspect()  # display shape, keys 1-8
         self.diag_auto = False          # diagnostics page is up because HDMI was just acquired
         self.pattern = -1               # test pattern showing (index into PATTERNS), -1 = none
+        self.last_pattern = 0           # the one t brings back
         self.resume = None              # (position, paused) of the video to return to
         self.diag_first = 0.0
         self.volume = 100               # percent
@@ -1513,12 +1514,13 @@ class App:
             return
         elif act == "pause":
             self.say(self.engine.toggle_pause(), 1000)
-        elif act == "prev":
-            self.pattern, self.resume = -1, None      # leaving the test patterns
-            self.advance(-1)
-        elif act == "next":
-            self.pattern, self.resume = -1, None
-            self.advance(1)
+        elif act in ("prev", "next"):
+            step = 1 if act == "next" else -1
+            if self.pattern >= 0:                     # z x c f choose the test pattern
+                self.pattern = (self.pattern + step) % len(PATTERNS)
+                self.show_pattern()
+            else:
+                self.advance(step)
         elif act == "back":
             self.engine.seek_rel(-SEEK_SECONDS)
             self.say(f"-{SEEK_SECONDS}s", 800)
@@ -1556,20 +1558,20 @@ class App:
             self.say("Loop: this video" if self.loop_one else "Loop: all videos", 1500)
 
     def next_pattern(self):
-        """Key t: step through the test patterns, then back to the video."""
+        """Key t: test patterns on (the one used last) or off (the video resumes)."""
+        if self.pattern >= 0:
+            self.end_pattern()
+            return
         if not (self.engine.name == "vlc" and self.output == "hdmi"):
             self.say("Test patterns need HDMI", 2000)
             return
-        if self.pattern < 0:
-            self.resume = (self.engine.position() or self.last_pos or 0.0, self.paused)
-        self.pattern += 1
-        if self.pattern >= len(PATTERNS):
-            self.end_pattern()
-        else:
-            self.show_pattern()
+        self.resume = (self.engine.position() or self.last_pos or 0.0, self.paused)
+        self.pattern = self.last_pattern
+        self.show_pattern()
 
     def show_pattern(self):
         title, name = PATTERNS[self.pattern]
+        self.last_pattern = self.pattern
         path = os.path.join(PATTERN_DIR, name)
         if not os.path.exists(path):
             self.say("Test pattern missing: " + name, 2500)
@@ -1666,7 +1668,7 @@ class App:
                 if self.pattern >= 0:
                     self.info.draw("Pattern %d/%d: %s" % (self.pattern + 1, len(PATTERNS),
                                                           PATTERNS[self.pattern][0]),
-                                   "Test pattern  (t: next)", None, None, self.volume, self.muted)
+                                   "Test pattern  t:off  z/c:next", None, None, self.volume, self.muted)
                 else:
                     self.info.draw(title, "Paused" if self.paused else "Playing",
                                    self.last_pos, self.length, self.volume, self.muted)
