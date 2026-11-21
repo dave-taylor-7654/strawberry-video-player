@@ -1,7 +1,7 @@
 {
   "app_name": "Strawberry Video Player",
   "package_name": "strawberry-video-player",
-  "version": "2.7.5",
+  "version": "2.7.6",
   "description": "Offline video player, HDMI diagnostic tool and test pattern generator for AV professionals on the CardputerZero.",
   "store": {
     "summary": "Offline video player, HDMI diagnostics and test patterns for AV professionals",

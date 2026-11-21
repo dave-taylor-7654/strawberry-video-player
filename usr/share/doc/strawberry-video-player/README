@@ -107,8 +107,6 @@ Test patterns (key t, HDMI only)
   4 Convergence: white grid in a red ring of cells, a dot in every cell
   5 Audio + sync: a 30 second 960x540 loop with a 1 kHz tone and a flash on the left, then the
     right, then both; picture and sound should land together
-  The patterns are in /usr/share/strawberry-video-player/patterns/ and are made by
-  tools/make-patterns.py in the source repository.
   Note: stills may be sent with a different color range than video. Check the Color line of
   the HDMI diagnostics page (key i) while a pattern is up.
 
