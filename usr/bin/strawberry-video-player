@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.7.3"
+VERSION = "2.7.4"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -572,6 +572,9 @@ class LcdInfo:
         self.stride = self.W * 2
         self.swap = False                       # True if the panel is BGR565
         self.help_until = 0.0
+        self.frame = None                       # the last frame written, re-applied by refresh()
+        self.frame_at = 0.0
+        self.bar_seen = False                   # first frame of a session clears the whole panel
         self.diag_until = 0.0                   # HDMI diagnostics page showing until then
         self.hdmi = HdmiInfo()
         self.note = ""                          # short message shown for a few seconds
@@ -608,6 +611,7 @@ class LcdInfo:
             self.saved = os.pread(fd, self.stride * self.H, 0)
             self.fd = fd
             self.last = None
+            self.bar_seen = False
             return True
         except (OSError, ValueError, ImportError) as e:
             dbg("LCD info unavailable:", e)
@@ -660,7 +664,38 @@ class LcdInfo:
                 o = row + x * 2
                 out[o] = v & 255
                 out[o + 1] = v >> 8
-        os.pwrite(self.fd, bytes(out), 0)
+        self.frame = bytes(out)
+        self.frame_at = time.time()
+        self._write(self.frame, keep_bar=self.bar_seen)
+
+    # The launcher paints a status strip (wifi, clock, battery) in the top right corner
+    # of the panel. Users like seeing it, so we never write over it after the first frame.
+    BAR_X, BAR_H = 196, 20
+
+    def _write(self, frame, keep_bar):
+        if not keep_bar:
+            os.pwrite(self.fd, frame, 0)
+            self.bar_seen = True
+            return
+        rows = self.stride
+        for y in range(self.BAR_H):                      # top rows: left part only
+            o = y * rows
+            os.pwrite(self.fd, frame[o:o + self.BAR_X * 2], o)
+        o = self.BAR_H * rows
+        os.pwrite(self.fd, frame[o:], o)
+
+    def refresh(self, every=0.5):
+        """While we run, the launcher also keeps painting parts of its lock screen (a
+        wallpaper patch, a caption) on this panel. Re-apply our last frame a couple of
+        times a second so those bits are covered at once, leaving the status strip alone.
+        (Rewriting identical bytes is cheap and does not flicker.)"""
+        if self.fd is None or self.frame is None or time.time() - self.frame_at < every:
+            return
+        self.frame_at = time.time()
+        try:
+            self._write(self.frame, keep_bar=True)
+        except OSError:
+            pass
 
     def fit(self, text, size, width):
         f = self.font(size)
@@ -720,7 +755,10 @@ class LcdInfo:
         """The 'no videos' page, redrawn only when something on it changes."""
         note = self.note if time.time() < self.note_until else ""
         state = ("empty", directory, hdmi_ok, note)
-        if self.fd is None or state == self.last:
+        if self.fd is None:
+            return
+        if state == self.last:
+            self.refresh()
             return
         self.page("empty", directory, hdmi_ok, note)
         self.last = state
@@ -735,6 +773,7 @@ class LcdInfo:
         link = self.hdmi_line(rows)
         state = (helping, title, status, pos, length, volume, muted, note, diag, link)
         if state == self.last:
+            self.refresh()
             return
         self.last = state
         from PIL import Image, ImageDraw
@@ -1820,6 +1859,7 @@ class App:
         """Keep the splash up until `end`; any player key skips the rest."""
         while time.time() < end and not self.quitting:
             self.backlight.hold()
+            self.info.refresh()
             for key, _ in self.sel.select(0.25):
                 kind = key.data[0]
                 if kind == "kbd":
