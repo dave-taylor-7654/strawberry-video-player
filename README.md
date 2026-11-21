@@ -16,6 +16,7 @@ display is connected, otherwise on the built-in 320x170 LCD, and sound follows t
 | s / d | volume down / up |
 | a | mute |
 | l | loop one / loop all |
+| 1-8 | display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9 |
 | h | help (on the LCD while HDMI plays) |
 | Esc | quit |
 

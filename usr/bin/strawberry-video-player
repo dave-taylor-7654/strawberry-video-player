@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.3.10"
+VERSION = "2.4.0"
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
@@ -64,13 +64,38 @@ def conf_value(key, default=None):
 HDMI_MODE = os.environ.get("STRAWBERRY_HDMI_MODE") or conf_value("hdmi_mode", "1920x1080@30")
 
 
-def monitor_par():
+def conf_set(key, value):
+    """Write key = value into the config file, keeping its other lines."""
+    try:
+        os.makedirs(os.path.dirname(CONF), exist_ok=True)
+        lines = []
+        try:
+            lines = open(CONF, encoding="utf-8").read().splitlines()
+        except OSError:
+            pass
+        done = False
+        for i, line in enumerate(lines):
+            if line.split("#", 1)[0].split("=", 1)[0].strip() == key and "=" in line:
+                lines[i] = "%s = %s" % (key, value)
+                done = True
+        if not done:
+            lines.append("%s = %s" % (key, value))
+        with open(CONF, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except OSError as e:
+        log("could not save", key, ":", e)
+
+
+def initial_aspect():
+    """Display shape at start: STRAWBERRY_DISPLAY_ASPECT, then the config file, else 16:9."""
+    return os.environ.get("STRAWBERRY_DISPLAY_ASPECT") or conf_value("display_aspect") or "16:9"
+
+
+def par_for(text):
     """VLC --monitor-par value for a display whose panel is not 16:9. Some monitors
     stretch the 16:9 signal over a 16:10 (or 4:3) panel, so everything looks too tall.
     Telling VLC the pixel shape makes it letterbox/pillarbox inside the signal, and the
-    monitor's stretch then restores the right proportions. Setting: display_aspect = 16:10
-    (or STRAWBERRY_DISPLAY_ASPECT); unset or 16:9 means no correction."""
-    text = os.environ.get("STRAWBERRY_DISPLAY_ASPECT") or conf_value("display_aspect")
+    monitor's stretch then restores the right proportions. None means no correction."""
     if not text:
         return None
     try:
@@ -96,7 +121,13 @@ KEYMAP = {
     ec.KEY_W: "back", ec.KEY_E: "fwd",
     ec.KEY_S: "vol_down", ec.KEY_D: "vol_up", ec.KEY_A: "mute",
     ec.KEY_H: "help", ec.KEY_L: "loop", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
+    ec.KEY_1: "aspect0", ec.KEY_2: "aspect1", ec.KEY_3: "aspect2", ec.KEY_4: "aspect3",
+    ec.KEY_5: "aspect4", ec.KEY_6: "aspect5", ec.KEY_7: "aspect6", ec.KEY_8: "aspect7",
+    ec.KEY_KP1: "aspect0", ec.KEY_KP2: "aspect1", ec.KEY_KP3: "aspect2", ec.KEY_KP4: "aspect3",
+    ec.KEY_KP5: "aspect4", ec.KEY_KP6: "aspect5", ec.KEY_KP7: "aspect6", ec.KEY_KP8: "aspect7",
 }
+# Keys 1-8: the shape of the display (what its panel does with the 16:9 signal).
+ASPECTS = ["16:9", "16:10", "4:3", "5:4", "1:1", "2.35:1", "2.21:1", "21:9"]
 REPEATABLE = {"back", "fwd", "vol_up", "vol_down"}
 VOLUME_STEP = 10
 
@@ -109,7 +140,7 @@ HELP_LINES = [
     ("s  /  d", "volume - / +"),
     ("a", "mute"),
     ("l", "loop one / all"),
-    ("h", "this help"),
+    ("1-8", "aspect ratio"),
     ("Esc", "quit"),
 ]
 
@@ -391,6 +422,8 @@ class LcdInfo:
         self.stride = self.W * 2
         self.swap = False                       # True if the panel is BGR565
         self.help_until = 0.0
+        self.note = ""                          # short message shown for a few seconds
+        self.note_until = 0.0
         self.last = None
         self.edid = edid_name() or "none"
         self.fonts = {}
@@ -439,6 +472,10 @@ class LcdInfo:
             pass
         self.fd = None
         self.saved = None
+
+    def notice(self, text, seconds=3.0):
+        self.note, self.note_until = text, time.time() + seconds
+        self.last = None
 
     def show_help(self, seconds=8):
         self.help_until = time.time() + seconds
@@ -513,7 +550,8 @@ class LcdInfo:
         if self.fd is None:
             return
         helping = time.time() < self.help_until
-        state = (helping, title, status, pos, length, volume, muted)
+        note = self.note if time.time() < self.note_until else ""
+        state = (helping, title, status, pos, length, volume, muted, note)
         if state == self.last:
             return
         self.last = state
@@ -530,8 +568,11 @@ class LcdInfo:
             d.text((14, 24), self.fit(title, 16, 292), fill=WHITE, font=self.font(16), anchor="ls")
             d.text((14, 51), "HDMI Output", fill=RED, font=self.font(16), anchor="ls")
             d.text((14, 78), "EDID: " + self.edid, fill=WHITE, font=self.font(15), anchor="ls")
-            d.text((14, 103), "Tab: LCD  s: -vol  d: +vol  q: pause  h: help",
-                   fill=WHITE, font=self.font(12), anchor="ls")
+            if note:
+                d.text((14, 103), self.fit(note, 12, 292), fill=RED, font=self.font(12), anchor="ls")
+            else:
+                d.text((14, 103), "Tab: LCD  s: -vol  d: +vol  q: pause  h: help",
+                       fill=WHITE, font=self.font(12), anchor="ls")
             x0, x1, y = 14, 306, 119
             d.rectangle([x0, y, x1, y + 2], fill=GREY)
             if length and pos is not None:
@@ -839,9 +880,10 @@ class VlcEngine:
     name = "vlc"
     LOAD_GRACE = 45.0        # a cold 9 GB file can take 10+ s to open
 
-    def __init__(self, loop_one=True, lease=None):
+    def __init__(self, loop_one=True, lease=None, aspect="16:9"):
         self.loop_one = loop_one
         self.lease = lease or DesktopLease()
+        self.aspect = aspect
         self.sock_path = os.path.join(RUNTIME, f"strawberry-vlc-{PID}.sock")
         self.proc = None
         self.sock = None
@@ -868,7 +910,7 @@ class VlcEngine:
              # is used (many displays list only 50/60 Hz, so that is what they get).
              "--drm-vout-mode=" + HDMI_MODE,
              "--fullscreen"]
-        par = monitor_par()
+        par = par_for(self.aspect)
         if par:
             c += ["--monitor-par=" + par]
         if self.mode == "sw":
@@ -1135,6 +1177,7 @@ class App:
         if first_file and first_file in self.files:
             self.idx = self.files.index(first_file)
         self.loop_one = True            # default: loop the current video
+        self.aspect = initial_aspect()  # display shape, keys 1-8
         self.volume = 100               # percent
         self.muted = False
         self.lease = DesktopLease()
@@ -1172,7 +1215,7 @@ class App:
     # -- engine lifecycle
     def make_engine(self):
         if self.output == "hdmi" and self.hdmi_backend == "vlc":
-            e = VlcEngine(self.loop_one, self.lease)
+            e = VlcEngine(self.loop_one, self.lease, self.aspect)
             e.mode = self.decoder_mode(self.current())[0]    # start in the right mode
             return e
         return MpvEngine(self.output, self.loop_one)
@@ -1231,6 +1274,8 @@ class App:
     def say(self, text, ms=1500):
         if self.engine:
             self.engine.say(text, ms)
+            if self.engine.name == "vlc":            # no OSD on HDMI: use the LCD page
+                self.info.notice(text, min(ms, 4000) / 1000.0)
 
     def current(self):
         return self.files[self.idx] if self.files else None
@@ -1312,10 +1357,33 @@ class App:
                 self.engine.say("\n".join(f"{k:<10}{v}" for k, v in HELP_LINES), 8000)
             else:
                 self.info.show_help()
+        elif act.startswith("aspect"):
+            self.set_aspect(ASPECTS[int(act[6:])])
         elif act == "loop":
             self.loop_one = not self.loop_one
             self.engine.set_loop_one(self.loop_one)
             self.say("Loop: this video" if self.loop_one else "Loop: all videos", 1500)
+
+    def set_aspect(self, text):
+        """Keys 1-8: tell the player the shape of the display. VLC reads it at start,
+        so on HDMI the player restarts (the desktop stays stopped) at the same spot."""
+        if self.engine.name != "vlc":
+            self.say("Aspect ratio applies to HDMI", 2000)
+            return
+        if text == self.aspect:
+            self.say("Aspect: " + text, 1500)
+            return
+        self.aspect = text
+        conf_set("display_aspect", text)
+        pos = (self.engine.position() or self.last_pos or 0.0)
+        paused = self.paused
+        self.say("Aspect: " + text, 4000)
+        self.update_info()                           # show it now, the restart takes a few s
+        self.stop_engine(release=False)
+        if self.start_engine():
+            self.load(start=float(pos), paused=paused, announce=False)
+        else:
+            self.quitting = True
 
     def handle(self, events):
         for ev in events:

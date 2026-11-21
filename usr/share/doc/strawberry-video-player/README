@@ -19,6 +19,8 @@ Keys (Cardputer keyboard, or any attached USB keyboard)
   s  d             volume down / up
   a                mute
   l                toggle loop one video / loop all videos (default: loop one)
+  1-8              display aspect ratio (HDMI): 16:9 16:10 4:3 5:4 1:1 2.35:1 2.21:1 21:9
+                   (the shape of your display's panel; see below; remembered)
   h                help (on the LCD while HDMI is playing)
   Esc              quit
 
@@ -77,8 +79,9 @@ Configuration file (optional): ~/.config/strawberry-video-player.conf
   hdmi_mode = 1920x1080@30     # same as STRAWBERRY_HDMI_MODE
   display_aspect = 16:10       # same as STRAWBERRY_DISPLAY_ASPECT
   Some monitors have a 16:10 (or 4:3) panel and stretch the 1920x1080 signal to fill it, so
-  everything looks too tall. Set display_aspect to the panel's shape: the player then
-  letterboxes the video inside the signal and the monitor's stretch makes it look right.
+  everything looks too tall. Press 1-8 to pick the panel's shape (or set display_aspect):
+  the player then letterboxes the video inside the signal and the monitor's stretch makes
+  it look right. The choice is saved in this file. Changing it restarts VLC for a few seconds.
 
 Command line
   strawberry-video-player --start 11:40 FILE    start at a position (SECONDS or MM:SS)
