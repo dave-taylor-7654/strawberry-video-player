@@ -31,7 +31,8 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.3.3"
+VERSION = "2.3.4"
+SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
 SEEK_SECONDS = 30
@@ -443,6 +444,8 @@ class LcdInfo:
                         continue
                 d.text((138, 78), "Strawberry", fill=WHITE, font=self.font(24), anchor="ls")
                 d.text((138, 104), "Video Player", fill=WHITE, font=self.font(24), anchor="ls")
+            d.text((138, 82), "Strawberry", fill=WHITE, font=self.font(24), anchor="ls")
+            d.text((138, 108), "Video Player", fill=WHITE, font=self.font(24), anchor="ls")
             d.text((138, 128), "Version " + VERSION, fill=RED, font=self.font(15), anchor="ls")
             d.text((138, 152), "www.videostrawberry.com", fill=GREY, font=self.font(13), anchor="ls")
         else:
@@ -1327,7 +1330,12 @@ class App:
         self.backlight.hold()                    # remember the current (awake) level
         if self.info.open():
             self.info.page("splash")
-            time.sleep(2.0)
+            end = time.time() + SPLASH_SECONDS       # any player key skips it
+            while time.time() < end and not self.quitting:
+                self.backlight.hold()
+                for key, _ in self.sel.select(0.25):
+                    if key.data[0] == "kbd" and self.kbd.read(key.data[1]):
+                        end = 0
         if not self.files and not self.wait_for_videos():
             self.info.close()
             return 0
