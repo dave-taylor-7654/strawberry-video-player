@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.3.6"
+VERSION = "2.3.7"
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
@@ -1305,7 +1305,11 @@ class App:
         pos = (self.engine.position() if self.engine else None) or 0.0
         paused = self.paused
         self.info.close()
-        self.stop_engine()
+        # HDMI -> LCD: keep the desktop stopped. Restarting it just as the LCD player
+        # opens the panel makes the new desktop session take the display away from it
+        # (sound but no picture, then the login screen). The LCD does not need it; it is
+        # restarted when the player quits.
+        self.stop_engine(release=(target != "lcd"))
         self.output = target
         if not self.open_output():
             self.quitting = True
@@ -1385,6 +1389,7 @@ class App:
         finally:
             self.info.close()
             self.stop_engine()
+            self.lease.release()            # desktop back (no-op if not held)
         return 0
 
     def hold_splash(self, end):
