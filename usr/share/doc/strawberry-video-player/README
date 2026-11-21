@@ -70,6 +70,8 @@ Environment variables
   STRAWBERRY_HDMI_BACKEND=     vlc or mpv (desktop window); default: vlc if allowed
   STRAWBERRY_HDMI_VO=          gpu|wlshm renderer for the mpv desktop-window mode
   STRAWBERRY_VLC_ARGS=         extra options appended to the VLC command line (testing)
+  STRAWBERRY_HDMI_MODE=        HDMI mode WxH@Hz (default 1920x1080@30: the display's 1080p mode
+                               with the nearest refresh rate; many displays offer only 50/60 Hz)
 
 Command line
   strawberry-video-player --start 11:40 FILE    start at a position (SECONDS or MM:SS)

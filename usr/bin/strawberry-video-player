@@ -31,7 +31,8 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.3.7"
+VERSION = "2.3.8"
+HDMI_MODE = os.environ.get("STRAWBERRY_HDMI_MODE", "1920x1080@30")
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
@@ -817,6 +818,11 @@ class VlcEngine:
              # the Pi's decoder asks for ~20 full-size buffers by default, which
              # would exhaust the CMA pool; fewer is plenty
              "--avcodec-options={num_capture_buffers=12,num_output_buffers=6}",
+             # Without this VLC leaves the display in whatever mode the console left
+             # (often 1024x768) and boxes the picture inside it: wrong aspect ratio.
+             # Ask for 1080p30: the display's 1080p mode with the nearest refresh rate
+             # is used (many displays list only 50/60 Hz, so that is what they get).
+             "--drm-vout-mode=" + HDMI_MODE,
              "--fullscreen"]
         if self.mode == "sw":
             # this Pi build of VLC picks its hardware decoder by name, so naming the
