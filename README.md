@@ -1,8 +1,17 @@
 # Strawberry Video Player
 
-A video player for the CardputerZero (Raspberry Pi CM0, Debian 13 arm64).
-It plays the videos in `~/Videos` alphabetically and loops. It shows on HDMI when a
-display is connected, otherwise on the built-in 320x170 LCD, and sound follows the picture.
+An offline video player, HDMI diagnostic tool and test pattern generator for AV professionals,
+for the CardputerZero.
+
+Runs on the CardputerZero (Raspberry Pi CM0, Debian 13 arm64), with no network needed.
+
+- **Offline video player:** plays the videos in `~/Videos` alphabetically and loops. It shows
+  on HDMI when a display is connected, otherwise on the built-in 320x170 LCD, and sound follows
+  the picture.
+- **HDMI diagnostic tool:** key `i` shows what the display reports (name, maker, active mode,
+  color range, audio formats, link status, CEC address) on the LCD.
+- **Test pattern generator:** key `t` shows color bars, gray steps, geometry, a convergence
+  grid, and an audio and sync test on HDMI.
 
 ## Keys
 

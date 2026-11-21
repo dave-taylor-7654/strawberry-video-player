@@ -1,6 +1,8 @@
 Strawberry Video Player
 =======================
 
+Offline video player, HDMI diagnostic tool and test pattern generator for AV professionals.
+
 Plays the videos in ~/Videos (alphabetical, non-recursive).
 
 Output
