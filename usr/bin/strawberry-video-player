@@ -31,7 +31,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.7.7"
+VERSION = "2.7.8"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -139,7 +139,7 @@ REPEATABLE = {"back", "fwd", "vol_up", "vol_down"}
 VOLUME_STEP = 10
 
 HELP_LINES = [
-    ("Tab", "HDMI / LCD"),
+    ("Tab", "Swap screens"),
     ("q  Space", "play / pause"),
     ("z  x  Del", "previous"),
     ("c  f", "next"),
@@ -148,8 +148,8 @@ HELP_LINES = [
     ("a", "mute"),
     ("l", "loop one / all"),
     ("1-8", "aspect ratio"),
-    ("i  t", "diagnostics / patterns"),
-    ("Esc", "quit"),
+    ("i", "HDMI diagnostics"),
+    ("t", "test patterns"),
 ]
 
 
