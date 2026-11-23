@@ -11,7 +11,7 @@ HDMI  VLC with Raspberry Pi's DRM video output: the hardware H.264 decoder feeds
 LCD   mpv with software decoding and an early downscale to 320x170.
 
 Keys:  Tab LCD <-> HDMI        q / Space / Return  play-pause
-       z / x / Del previous    c / f  next
+       z / x / Del previous    c / f  next    0 / o  LCD off-on (HDMI)
        w back 30 s   e forward 30 s     l loop one <-> loop all
        s volume -    d volume +    a mute    p subtitles (HDMI)    h help    Esc quit
 
@@ -34,7 +34,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.7.14"
+VERSION = "2.7.15"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -128,7 +128,7 @@ KEYMAP = {
     ec.KEY_Q: "pause", ec.KEY_SPACE: "pause", ec.KEY_ENTER: "pause", ec.KEY_KPENTER: "pause",
     ec.KEY_W: "back", ec.KEY_E: "fwd",
     ec.KEY_S: "vol_down", ec.KEY_D: "vol_up", ec.KEY_A: "mute",
-    ec.KEY_H: "help", ec.KEY_I: "diag", ec.KEY_T: "pattern", ec.KEY_L: "loop", ec.KEY_P: "subs", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
+    ec.KEY_H: "help", ec.KEY_I: "diag", ec.KEY_T: "pattern", ec.KEY_L: "loop", ec.KEY_P: "subs", ec.KEY_0: "display", ec.KEY_KP0: "display", ec.KEY_O: "display", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
     ec.KEY_1: "aspect0", ec.KEY_2: "aspect1", ec.KEY_3: "aspect2", ec.KEY_4: "aspect3",
     ec.KEY_5: "aspect4", ec.KEY_6: "aspect5", ec.KEY_7: "aspect6", ec.KEY_8: "aspect7",
     ec.KEY_KP1: "aspect0", ec.KEY_KP2: "aspect1", ec.KEY_KP3: "aspect2", ec.KEY_KP4: "aspect3",
@@ -147,10 +147,10 @@ VOLUME_STEP = 10
 HELP_LINES = [
     ("Tab", "Swap screens"),
     ("q  Space", "play / pause"),
-    ("z  x  Del", "previous"),
-    ("c  f", "next"),
+    ("\u25c4 / \u25ba", "Previous/Next"),
     ("w  /  e", "back / forward 30s"),
     ("a  d  s", "Mute, +vol, -vol"),
+    ("0  o", "LCD off / on"),
     ("p", "subtitles (HDMI)"),
     ("l", "loop one / all"),
     ("1-8", "aspect ratio"),
@@ -405,9 +405,31 @@ class Backlight:
         self.ok = os.path.isdir(self.DIR)
         self.target = None
         self.restores = 0
+        self.off = False                          # the user turned the display off (key 0)
+
+    def set_off(self, off):
+        """Key 0: display off (saves power while video is on HDMI) or back on."""
+        if not self.ok or off == self.off:
+            return self.off
+        try:
+            if off:
+                cur = int(open(self.DIR + "/brightness").read())
+                if cur > 0:
+                    self.target = cur
+                level = 0
+            else:
+                if self.target is None:
+                    self.target = int(open(self.DIR + "/max_brightness").read())
+                level = self.target
+            with open(self.DIR + "/brightness", "w") as f:
+                f.write(str(level))
+            self.off = off
+        except (OSError, ValueError) as e:
+            dbg("backlight control unavailable:", e)
+        return self.off
 
     def hold(self):
-        if not self.ok:
+        if not self.ok or self.off:
             return
         try:
             cur = int(open(self.DIR + "/brightness").read())
@@ -842,7 +864,12 @@ class LcdInfo:
             d.text((14, 22), "Strawberry Video Player", fill=RED, font=self.font(16), anchor="ls")
             for i, (keys, desc) in enumerate(HELP_LINES):
                 y = 36 + i * 13
-                d.text((14, y), keys, fill=WHITE, font=self.font(12), anchor="ls")
+                if "\u25c4" in keys:                 # the font has no triangles: draw them
+                    d.polygon([(21, y - 9), (21, y), (14, y - 4.5)], fill=WHITE)
+                    d.text((28, y), "/", fill=WHITE, font=self.font(12), anchor="ms")
+                    d.polygon([(35, y - 9), (35, y), (42, y - 4.5)], fill=WHITE)
+                else:
+                    d.text((14, y), keys, fill=WHITE, font=self.font(12), anchor="ls")
                 d.text((100, y), desc, fill=WHITE, font=self.font(12), anchor="ls")
         else:
             d.text((14, 24), self.fit(title, 16, 292), fill=WHITE, font=self.font(16), anchor="ls")
@@ -1896,6 +1923,12 @@ class App:
                 self.switch_output("lcd" if self.output == "hdmi" else "hdmi")
         elif act == "pattern":
             self.next_pattern()
+        elif act == "display":
+            if self.output != "hdmi" or not self.engine:
+                self.say("Display off needs HDMI", 2000)
+            else:
+                self.backlight.set_off(not self.backlight.off)
+                self.info.last = None            # redraw the page when the display comes back
         elif not self.engine:
             return
         elif act == "pause":
@@ -2065,6 +2098,10 @@ class App:
 
     def update_info(self):
         """Keep the LCD info page in step while HDMI plays; release the LCD otherwise."""
+        if self.backlight.off:
+            if self.output == "hdmi" and self.engine:
+                return                               # display is off: nothing to draw
+            self.backlight.set_off(False)            # video is not on HDMI any more: wake it
         if self.engine and self.engine.name == "vlc" and self.output == "hdmi":
             if self.info.open():
                 self.auto_diag()
@@ -2098,6 +2135,8 @@ class App:
         if self.pattern >= 0 and self.resume:         # back to the video, not the pattern
             pos, paused = self.resume
         self.pattern, self.resume = -1, None
+        if target == "lcd":
+            self.backlight.set_off(False)            # the picture is about to be on the LCD
         self.info.close()
         # HDMI -> LCD: keep the desktop stopped. Restarting it just as the LCD player
         # opens the panel makes the new desktop session take the display away from it
@@ -2189,6 +2228,7 @@ class App:
                 self.note_position(force=True)
             except Exception:
                 pass
+            self.backlight.set_off(False)   # never leave the LCD dark
             self.stop_engine()
             self.lease.release()            # desktop back (no-op if not held)
             self.usb.close()

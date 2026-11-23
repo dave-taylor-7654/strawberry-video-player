@@ -25,6 +25,7 @@ Runs on the CardputerZero (Raspberry Pi CM0, Debian 13 arm64), with no network n
 | s / d | volume down / up |
 | a | mute |
 | l | loop one / loop all |
+| 0 or o | LCD off / on while playing on HDMI (saves a little power) |
 | p | subtitles on HDMI: off, then each embedded track (the LCD note names the language) |
 | 1-8 | display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9 |
 | h | help (on the LCD while HDMI plays) |
@@ -42,8 +43,8 @@ Nothing to set up on the stock CardputerZero image. For full-screen 1080p the pl
 
 ## Build and install
 
-    dpkg-deb --build --root-owner-group . strawberry-video-player_2.7.14_all.deb
-    sudo dpkg -i strawberry-video-player_2.7.14_all.deb
+    dpkg-deb --build --root-owner-group . strawberry-video-player_2.7.15_all.deb
+    sudo dpkg -i strawberry-video-player_2.7.15_all.deb
 
 Run it from the launcher, or `strawberry-video-player [DIR|FILE] [--start MM:SS] [--output lcd|hdmi]`.
 
