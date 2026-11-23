@@ -31,10 +31,14 @@ Runs on the CardputerZero (Raspberry Pi CM0, Debian 13 arm64), with no network n
 | i | HDMI diagnostics on the LCD: display name, mode, color range, audio, link, CEC address |
 | Esc | quit |
 
+## Smooth HDMI
+
+Nothing to set up on the stock CardputerZero image. For full-screen 1080p the player stops the desktop while it plays HDMI and starts it again afterwards, using the passwordless sudo the `pi` user already has, for those two commands only (`systemctl stop lightdm` and `systemctl start lightdm`). If a system has no sudo, HDMI plays in a desktop window (less smooth) and the LCD shows `sudo strawberry-video-player --setup`, which installs a polkit rule for the same two actions. `--unsetup` removes it.
+
 ## Build and install
 
-    dpkg-deb --build --root-owner-group . strawberry-video-player_2.3.3_all.deb
-    sudo dpkg -i strawberry-video-player_2.3.3_all.deb
+    dpkg-deb --build --root-owner-group . strawberry-video-player_2.7.11_all.deb
+    sudo dpkg -i strawberry-video-player_2.7.11_all.deb
 
 Run it from the launcher, or `strawberry-video-player [DIR|FILE] [--start MM:SS] [--output lcd|hdmi]`.
 

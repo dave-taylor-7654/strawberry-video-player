@@ -14,6 +14,9 @@ Keys:  Tab LCD <-> HDMI        q / Space / Return  play-pause
        z / x / Del previous    c / f  next
        w back 30 s   e forward 30 s     l loop one <-> loop all
        s volume -    d volume +    a mute    h help    Esc quit
+
+One-time setup for smooth HDMI (lets the player stop the desktop):
+       sudo strawberry-video-player --setup        (undo with --unsetup)
 """
 import glob
 import json
@@ -31,7 +34,7 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.7.10"
+VERSION = "2.7.11"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
@@ -716,7 +719,15 @@ class LcdInfo:
         from PIL import Image, ImageDraw
         img = Image.new("RGB", (self.W, self.H), (0, 0, 0))
         d = ImageDraw.Draw(img)
-        if kind == "splash":
+        if kind == "setup":
+            d.text((14, 32), "Smooth HDMI setup", fill=RED, font=self.font(22), anchor="ls")
+            d.text((14, 58), "HDMI is in window mode. For smooth", fill=WHITE, font=self.font(15), anchor="ls")
+            d.text((14, 78), "full-screen video, open a terminal on", fill=WHITE, font=self.font(15), anchor="ls")
+            d.text((14, 98), "this device and type:", fill=WHITE, font=self.font(15), anchor="ls")
+            d.rounded_rectangle([14, 108, 306, 142], radius=6, outline=RED, width=2)
+            d.text((160, 131), "sudo strawberry-video-player --setup", fill=WHITE, font=self.font(14), anchor="ms")
+            d.text((14, 163), "Then restart the player.   Esc: quit", fill=GRAY, font=self.font(12), anchor="ls")
+        elif kind == "splash":
             try:
                 img.paste(Image.open(self.SPLASH).convert("RGB").resize((self.W, self.H)))
             except (OSError, ValueError):
@@ -750,6 +761,16 @@ class LcdInfo:
                 d.text((14, 163), "Esc: quit", fill=GRAY, font=self.font(12), anchor="ls")
         self.last = None
         self._blit(img)
+
+    def setup(self):
+        """Shown while HDMI plays in a window because the polkit rule is missing."""
+        if self.fd is None:
+            return
+        if self.last == "setup":
+            self.refresh()
+            return
+        self.page("setup")
+        self.last = "setup"
 
     def empty(self, directory, hdmi_ok=True):
         """The 'no videos' page, redrawn only when something on it changes."""
@@ -819,27 +840,35 @@ class LcdInfo:
 # ---------------------------------------------------------------- desktop lease
 class DesktopLease:
     """Stops the desktop (lightdm) so VLC can own the HDMI display, and starts it
-    again afterwards. Needs permission to manage lightdm.service; the package
-    installs a polkit rule for that. A watcher process restarts the desktop if the
-    player is killed without cleaning up."""
+    again afterwards. Needs permission to manage lightdm.service: either a polkit
+    rule (see --setup) or the passwordless sudo that the stock image gives the pi
+    user (tried as "sudo -n systemctl stop|start lightdm", nothing else). A watcher
+    process restarts the desktop if the player is killed without cleaning up."""
     UNIT = "lightdm"
 
     def __init__(self):
         self.held = False
         self.stopped = False
         self.guard = None
+        self.sudo = False           # the plain call was refused, sudo -n worked
+        self.failed = False         # neither worked: the user needs --setup
 
     def _systemctl(self, verb, timeout=30):
-        try:
-            r = subprocess.run(["systemctl", "--no-ask-password", verb, self.UNIT],
-                               capture_output=True, timeout=timeout)
-        except (OSError, subprocess.SubprocessError) as e:
-            dbg("systemctl", verb, "failed:", e)
-            return False
-        if r.returncode != 0:
+        tries = [["systemctl", "--no-ask-password", verb, self.UNIT]]
+        sudo = ["sudo", "-n"] + tries[0]
+        tries = [sudo] if self.sudo else tries + [sudo]
+        for cmd in tries:
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=timeout,
+                                   stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError) as e:
+                dbg("systemctl", verb, "failed:", e)
+                continue
+            if r.returncode == 0:
+                self.sudo = cmd is sudo
+                return True
             dbg("systemctl", verb, self.UNIT, "->", r.stderr.decode(errors="replace").strip())
-            return False
-        return True
+        return False
 
     def acquire(self):
         if self.held:
@@ -851,12 +880,15 @@ class DesktopLease:
             self.held = True
             return True
         if not self._systemctl("stop"):
+            self.failed = True
             return False
+        self.failed = False
         self.held = True
         self.stopped = True
         self.guard = subprocess.Popen(
             ["sh", "-c", 'p=$1; shift; while kill -0 "$p" 2>/dev/null; do sleep 1; done;'
-             ' exec "$@"', "sh", str(PID), "systemctl", "--no-ask-password", "start", self.UNIT],
+             ' exec "$@"', "sh", str(PID)] + (["sudo", "-n"] if self.sudo else [])
+            + ["systemctl", "--no-ask-password", "start", self.UNIT],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True)
         quiet_console()
@@ -1747,6 +1779,10 @@ class App:
                 else:
                     self.info.draw(title, "Paused" if self.paused else "Playing",
                                    self.last_pos, self.length, self.volume, self.muted)
+        elif (self.engine and self.engine.name == "mpv" and self.output == "hdmi"
+              and self.hdmi_backend == "mpv" and self.lease.failed):
+            if self.info.open():
+                self.info.setup()
         elif self.engine is None and not self.files:
             if self.info.open():
                 self.info.empty(self.dir, hdmi_ok=hdmi_connected() and self.hdmi_backend == "vlc")
@@ -1945,6 +1981,55 @@ def parse_time(text):
     return secs
 
 
+RULE_PATH = "/usr/share/polkit-1/rules.d/50-strawberry-video-player.rules"
+RULE_TEXT = """// Installed by "sudo strawberry-video-player --setup"; remove with --unsetup.
+// Lets members of the video group stop and start the desktop (lightdm) so the
+// Strawberry Video Player can use the HDMI display directly.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "lightdm.service" &&
+        (action.lookup("verb") == "stop" || action.lookup("verb") == "start") &&
+        subject.isInGroup("video")) { return polkit.Result.YES; }
+});
+"""
+
+
+def setup_main(remove):
+    """--setup / --unsetup: install or remove the polkit rule (needs root)."""
+    if os.geteuid() != 0:
+        print("This needs administrator rights; running it with sudo.", flush=True)
+        os.execvp("sudo", ["sudo", sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:])
+    if remove:
+        try:
+            os.unlink(RULE_PATH)
+            print("Removed. HDMI will play in a desktop window (less smooth at 1080p).")
+        except FileNotFoundError:
+            print("Nothing to remove: the rule is not installed.")
+        return 0
+    try:
+        if os.path.exists(RULE_PATH) and open(RULE_PATH).read() == RULE_TEXT:
+            print("Already set up. HDMI uses the smooth full-screen mode.")
+            return 0
+        tmp = RULE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(RULE_TEXT)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, RULE_PATH)
+    except OSError as e:
+        print("Could not write", RULE_PATH + ":", e, file=sys.stderr)
+        return 1
+    user = os.environ.get("SUDO_USER") or "pi"
+    try:
+        import grp
+        if user not in grp.getgrnam("video").gr_mem:
+            print(f"Note: user {user} is not in the video group; run: sudo usermod -aG video {user}")
+    except (KeyError, ImportError):
+        pass
+    print("Done. HDMI will now play smooth full-screen. Restart the player to use it.")
+    print("To undo: sudo strawberry-video-player --unsetup")
+    return 0
+
+
 def main():
     args = sys.argv[1:]
     start = 0.0
@@ -1968,6 +2053,8 @@ def main():
     if arg in ("-h", "--help"):
         print(__doc__)
         return 0
+    if arg in ("--setup", "--unsetup"):
+        return setup_main(arg == "--unsetup")
     if arg == "--version":
         print("strawberry-video-player", VERSION)
         return 0

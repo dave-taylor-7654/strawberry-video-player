@@ -61,19 +61,19 @@ How HDMI works
   is killed. The LCD shows an info page (title, EDID name, progress, volume) and
   is kept awake while the player runs. There is no on-screen text on HDMI itself.
 
-  This needs permission to stop and start lightdm.service. The package does NOT
-  grant that by itself. To allow it, install a polkit rule such as:
+  This needs permission to stop and start lightdm.service. On the stock
+  CardputerZero image nothing needs to be set up: the pi user has passwordless
+  sudo, and the player uses it for exactly two commands,
+  "sudo -n systemctl stop lightdm" and "sudo -n systemctl start lightdm".
+  If your system has neither sudo nor a polkit rule for that, the player plays
+  HDMI in a window on the desktop (mpv, software decoding), which is less smooth
+  at 1080p, and the LCD shows how to fix it: as an administrator, run
 
-    polkit.addRule(function(action, subject) {
-        if (action.id == "org.freedesktop.systemd1.manage-units" &&
-            action.lookup("unit") == "lightdm.service" &&
-            (action.lookup("verb") == "stop" || action.lookup("verb") == "start") &&
-            subject.isInGroup("video")) { return polkit.Result.YES; }
-    });
+    sudo strawberry-video-player --setup
 
-  in /usr/share/polkit-1/rules.d/50-strawberry-video-player.rules (as root).
-  Without permission the player plays HDMI in a window on the desktop (mpv,
-  software decoding), which works but is less smooth at 1080p.
+  That installs a small polkit rule (/usr/share/polkit-1/rules.d/50-strawberry-video-player.rules)
+  letting members of the video group stop and start lightdm, and nothing else.
+  Undo it with: sudo strawberry-video-player --unsetup
 
   Hardware or software decoding is chosen per file from its stream header
   (ffprobe). The Pi's hardware decoder handles 8-bit 4:2:0 H.264, profiles up to
