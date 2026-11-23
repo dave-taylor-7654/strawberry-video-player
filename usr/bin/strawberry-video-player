@@ -13,7 +13,7 @@ LCD   mpv with software decoding and an early downscale to 320x170.
 Keys:  Tab LCD <-> HDMI        q / Space / Return  play-pause
        z / x / Del previous    c / f  next
        w back 30 s   e forward 30 s     l loop one <-> loop all
-       s volume -    d volume +    a mute    h help    Esc quit
+       s volume -    d volume +    a mute    p subtitles (HDMI)    h help    Esc quit
 
 One-time setup for smooth HDMI (lets the player stop the desktop):
        sudo strawberry-video-player --setup        (undo with --unsetup)
@@ -34,13 +34,16 @@ import time
 import evdev
 from evdev import ecodes as ec
 
-VERSION = "2.7.11"
+VERSION = "2.7.14"
 DIAG_AT_ACQUIRE = 4.0        # seconds the diagnostics page shows when HDMI is acquired
 DIAG_MAX_WAIT = 30.0        # ...and no longer than this if playback never starts
 SPLASH_SECONDS = 10.0
 VIDEO_EXTS = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
               ".mpg", ".mpeg", ".wmv", ".flv", ".ogv", ".3gp"}
 SEEK_SECONDS = 30
+RESUME_MIN_LENGTH = 120         # only videos at least this long (s) are resumed
+RESUME_EDGE = (5, 10)           # nothing saved in the first 5 s; forgotten in the last 10 s
+RESUME_STATE = os.path.expanduser("~/.local/state/strawberry-video-player/resume.json")
 LCD_DRM = "/dev/dri/cardputer-zero-internal"
 LCD_AUDIO_HINT = "platform-sound"          # PipeWire sink name fragment
 HDMI_ALSA = "plughw:CARD=vc4hdmi,DEV=0"    # ALSA device name (VLC form)
@@ -125,7 +128,7 @@ KEYMAP = {
     ec.KEY_Q: "pause", ec.KEY_SPACE: "pause", ec.KEY_ENTER: "pause", ec.KEY_KPENTER: "pause",
     ec.KEY_W: "back", ec.KEY_E: "fwd",
     ec.KEY_S: "vol_down", ec.KEY_D: "vol_up", ec.KEY_A: "mute",
-    ec.KEY_H: "help", ec.KEY_I: "diag", ec.KEY_T: "pattern", ec.KEY_L: "loop", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
+    ec.KEY_H: "help", ec.KEY_I: "diag", ec.KEY_T: "pattern", ec.KEY_L: "loop", ec.KEY_P: "subs", ec.KEY_TAB: "output", ec.KEY_ESC: "quit",
     ec.KEY_1: "aspect0", ec.KEY_2: "aspect1", ec.KEY_3: "aspect2", ec.KEY_4: "aspect3",
     ec.KEY_5: "aspect4", ec.KEY_6: "aspect5", ec.KEY_7: "aspect6", ec.KEY_8: "aspect7",
     ec.KEY_KP1: "aspect0", ec.KEY_KP2: "aspect1", ec.KEY_KP3: "aspect2", ec.KEY_KP4: "aspect3",
@@ -147,8 +150,8 @@ HELP_LINES = [
     ("z  x  Del", "previous"),
     ("c  f", "next"),
     ("w  /  e", "back / forward 30s"),
-    ("s  /  d", "volume - / +"),
-    ("a", "mute"),
+    ("a  d  s", "Mute, +vol, -vol"),
+    ("p", "subtitles (HDMI)"),
     ("l", "loop one / all"),
     ("1-8", "aspect ratio"),
     ("i", "HDMI diagnostics"),
@@ -229,6 +232,33 @@ def lcd_audio_device():
     except Exception:
         pass
     return "auto"
+
+
+def next_sub(ids, current):
+    """Cycle: off -> first -> second ... -> off. ids are the tracks; current is one of
+    them or None for off. Returns the next choice (None = off)."""
+    if not ids:
+        return None
+    if current not in ids:
+        return ids[0]
+    i = ids.index(current) + 1
+    return ids[i] if i < len(ids) else None
+
+
+def resume_load():
+    try:
+        with open(RESUME_STATE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def resume_key(path):
+    try:
+        return "%s|%d" % (path, os.path.getsize(path))
+    except OSError:
+        return None
 
 
 def scan(directory):
@@ -748,7 +778,7 @@ class LcdInfo:
             d.text((14, 32), "No videos found", fill=RED, font=self.font(22), anchor="ls")
             d.text((14, 58), "Videos may be added to", fill=WHITE, font=self.font(15), anchor="ls")
             d.text((14, 82), self.fit(shown, 18, 292), fill=WHITE, font=self.font(18), anchor="ls")
-            d.text((14, 101), "They play as soon as they appear.", fill=GRAY, font=self.font(13), anchor="ls")
+            d.text((14, 101), "Or insert a USB drive. Plays right away.", fill=GRAY, font=self.font(13), anchor="ls")
             edge = RED if hdmi_ok else GRAY
             d.rounded_rectangle([14, 111, 306, 145], radius=6, outline=edge, width=2)
             if hdmi_ok:
@@ -1095,6 +1125,9 @@ class MpvEngine:
     def position(self, timeout=1.5):
         return self._request(["get_property", "time-pos"], timeout)
 
+    def length(self):
+        return self._request(["get_property", "duration"], 1.0)
+
     def load(self, path, start=0.0, paused=False, mode="default"):
         opts = []
         if start > 1:
@@ -1340,6 +1373,49 @@ class VlcEngine:
         self.paused = not self.paused
         return "Paused" if self.paused else "Playing"
 
+    def _ask_until(self, command, marker, timeout=1.5):
+        """Send an rc command and collect its multi-line reply up to a marker line."""
+        if not self.sock:
+            return []
+        self._lines()
+        try:
+            self.sock.sendall(command.encode() + b"\n")
+        except OSError:
+            return []
+        end, seen = time.time() + timeout, []
+        while time.time() < end:
+            for line in self._lines():
+                seen.append(line)
+                if marker in line:
+                    return seen
+            time.sleep(0.03)
+        return seen
+
+    def subtitles(self):
+        """([(id, label)], current id or None) from the rc 'strack' listing."""
+        tracks, current = [], None
+        for line in self._ask_until("strack", "end of Subtitle Track"):
+            m = re.match(r"\|\s*(-?\d+)\s*-\s*(.*?)(\s*\*)?\s*$", line)
+            if not m or int(m.group(1)) < 0:
+                continue
+            tid, text = int(m.group(1)), m.group(2)
+            lang = re.search(r"\[(.+)\]", text)
+            n = len(tracks) + 1
+            tracks.append((tid, lang.group(1) if lang else (re.sub(r"^Track \d+\s*-?\s*", "", text) or f"Track {n}")))
+            if m.group(3):
+                current = tid
+        return tracks, current
+
+    def sub_cycle(self):
+        tracks, current = self.subtitles()
+        if not tracks:
+            return "No subtitles"
+        choice = next_sub([t for t, _ in tracks], current)
+        self._ask(f"strack {choice if choice is not None else -1}", 1.0)
+        if choice is None:
+            return "Subtitles: off"
+        return "Subtitles: " + dict(tracks)[choice]
+
     def seek_rel(self, delta):
         # this VLC treats "seek +N" as absolute, so compute the target ourselves
         pos = self.position()
@@ -1431,11 +1507,175 @@ class Keyboards:
         return out
 
 
+# ---------------------------------------------------------------- USB drives
+class UsbDrives:
+    """Finds USB drives, mounts them read-only, and says where their videos are.
+
+    The desktop normally automounts drives, but it is stopped while HDMI plays, so
+    the player does it: first with udisks (when the system allows it), otherwise
+    with "sudo -n mount" / "sudo -n umount" (the stock image's passwordless sudo).
+    Drives are mounted read-only (nosuid, nodev, noexec) under MOUNT_ROOT and
+    unmounted when pulled or when the player quits. Work happens in a thread; the
+    player only reads .dir (the videos folder on the first drive that has some)."""
+    MOUNT_ROOT = "/media/strawberry-video-player"
+    FSTYPES = {"vfat", "exfat", "ntfs", "ext2", "ext3", "ext4"}
+
+    def __init__(self):
+        self.dir = None              # videos folder on a drive, or None
+        self.label = ""
+        self.ours = {}               # device -> mount point we created
+        self.worker = None
+        self.cmd_ok = {}             # does sudo/udisks work here (remembered)
+
+    # -- discovery
+    def partitions(self):
+        try:
+            r = subprocess.run(["lsblk", "-J", "-o", "NAME,PKNAME,PATH,TYPE,FSTYPE,LABEL,MOUNTPOINTS,TRAN"],
+                               capture_output=True, timeout=10, stdin=subprocess.DEVNULL)
+            tree = json.loads(r.stdout or b"{}")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return []
+        nodes = []                                      # lsblk nests or lists flat: handle both
+
+        def flatten(node, parent):
+            if parent and not node.get("pkname"):
+                node = dict(node, pkname=parent)
+            nodes.append(node)
+            for c in node.get("children") or []:
+                flatten(c, node.get("name"))
+        for n in tree.get("blockdevices", []):
+            flatten(n, None)
+        by_name = {n.get("name"): n for n in nodes}
+
+        def on_usb(node):
+            seen = 0
+            while node and seen < 5:                    # a partition is on USB when its disk is
+                if node.get("tran") == "usb":           # (not "hotplug": the SD card has that)
+                    return True
+                node = by_name.get(node.get("pkname"))
+                seen += 1
+            return False
+        out = []
+        for n in nodes:
+            if n.get("type") in ("part", "disk") and n.get("fstype") in self.FSTYPES and on_usb(n):
+                mps = [m for m in (n.get("mountpoints") or []) if m]
+                out.append({"dev": n["path"], "fstype": n["fstype"],
+                            "label": n.get("label") or "", "mount": mps[0] if mps else None})
+        return out
+
+    # -- mounting
+    def _run(self, cmd, timeout=40):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            if r.returncode != 0:
+                dbg("usb:", " ".join(cmd), "->", r.stderr.decode(errors="replace").strip())
+            return r
+        except (OSError, subprocess.SubprocessError) as e:
+            dbg("usb:", cmd[0], "failed:", e)
+            return None
+
+    def mount(self, part):
+        dev, fs = part["dev"], part["fstype"]
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", part["label"] or os.path.basename(dev)) or "usb"
+        target = os.path.join(self.MOUNT_ROOT, name)
+        if os.path.ismount(target):
+            target += "-" + os.path.basename(dev)
+        opts = "ro,nosuid,nodev,noexec"
+        if fs in ("vfat", "exfat", "ntfs"):
+            opts += ",uid=%d,gid=%d,umask=022" % (os.getuid(), os.getgid())
+        if fs == "vfat":
+            opts += ",utf8"
+        typ = "ntfs-3g" if fs == "ntfs" else fs
+        steps = [["sudo", "-n", "mkdir", "-p", target],
+                 ["sudo", "-n", "mount", "-t", typ, "-o", opts, dev, target]]
+        for cmd in steps:
+            r = self._run(cmd)
+            if r is None or r.returncode != 0:
+                self._run(["sudo", "-n", "rmdir", target])
+                return None
+        log("USB drive mounted:", dev, "->", target)
+        return target
+
+    def unmount(self, target):
+        r = self._run(["sudo", "-n", "umount", "-l", target])
+        if r is not None and r.returncode == 0:
+            self._run(["sudo", "-n", "rmdir", target])
+
+    # -- the videos folder on a mounted drive
+    @staticmethod
+    def videos_dir(mount):
+        try:
+            names = sorted(os.listdir(mount), key=str.casefold)
+        except OSError:
+            return None
+        cands = [os.path.join(mount, n) for n in names
+                 if n.casefold() == "videos" and os.path.isdir(os.path.join(mount, n))]
+        for d in cands + [mount]:
+            if scan(d):
+                return d
+        return None
+
+    def update(self):
+        parts = self.partitions()
+        present = {p["dev"] for p in parts}
+        for dev in list(self.ours):                     # drive pulled: let go of its mount
+            if dev not in present:
+                self.unmount(self.ours.pop(dev))
+        found, label = None, ""
+        for part in parts:
+            mount = part["mount"]
+            if not mount:
+                if part["dev"] in self.ours:
+                    mount = self.ours[part["dev"]]
+                else:
+                    mount = self.mount(part)
+                    if mount:
+                        self.ours[part["dev"]] = mount
+            if mount and not found:
+                d = self.videos_dir(mount)
+                if d:
+                    found, label = d, part["label"] or os.path.basename(part["dev"])
+        self.label = label
+        self.dir = found
+
+    def _loop(self):
+        try:
+            self.update()
+        except Exception as e:                          # never take the player down
+            dbg("usb update failed:", e)
+
+    def refresh(self, wait=False):
+        """Look for drives in the background (or now, with wait=True)."""
+        if self.worker and self.worker.is_alive():
+            if wait:
+                self.worker.join()
+            return
+        self.worker = threading.Thread(target=self._loop, daemon=True)
+        self.worker.start()
+        if wait:
+            self.worker.join()
+
+    def close(self):
+        if self.worker and self.worker.is_alive():
+            self.worker.join(15)
+        for dev in list(self.ours):
+            self.unmount(self.ours.pop(dev))
+        self.dir = None
+
+
 # ---------------------------------------------------------------- the player
 class App:
-    def __init__(self, directory, first_file=None, start_at=0.0, output=None):
-        self.dir = directory
-        self.files = scan(directory)
+    def __init__(self, directory, first_file=None, start_at=0.0, output=None, use_usb=True):
+        self.base_dir = directory
+        self.use_usb = use_usb
+        self.resume_map = resume_load()     # "path|size" -> seconds, for videos >= RESUME_MIN_LENGTH
+        self.resume_saved = 0.0
+        self.pos_file = None            # the file last_pos belongs to
+        self.usb = UsbDrives()
+        if use_usb:                                 # a drive that is already in plays first
+            self.usb.refresh(wait=True)
+        self.usb_seen = self.dir
+        self.files = scan(self.dir)
         self.idx = 0
         if first_file and first_file in self.files:
             self.idx = self.files.index(first_file)
@@ -1470,6 +1710,11 @@ class App:
         self.sel = selectors.DefaultSelector()
         self.kbd = Keyboards(self.sel)
         self.sel_fd = None
+
+    @property
+    def dir(self):
+        """Where videos come from: a USB drive while one with videos is in, else the folder."""
+        return self.usb.dir or self.base_dir
 
     @property
     def paused(self):
@@ -1559,11 +1804,59 @@ class App:
             sw, why = True, "stalled in hardware earlier"
         return ("sw" if sw else "default"), why
 
+    def resume_position(self, f):
+        k = resume_key(f)
+        pos = self.resume_map.get(k) if k else None
+        return float(pos) if isinstance(pos, (int, float)) else 0.0
+
+    def note_position(self, force=False):
+        """Remember where a long video is, so it resumes there next time."""
+        f, pos, length = self.pos_file, self.last_pos, self.length
+        if not f or pos is None or self.pattern >= 0:
+            return
+        if not length and self.engine:               # (VLC may not know it yet at load: keep asking)
+            try:
+                length = self.engine.length()
+            except OSError:
+                return
+            if length:
+                self.length = length
+        if not length or length < RESUME_MIN_LENGTH:
+            return
+        k = resume_key(f)
+        if not k:
+            return
+        dirty = False
+        if RESUME_EDGE[0] < pos < length - RESUME_EDGE[1]:
+            if self.resume_map.get(k) != int(pos):
+                self.resume_map.pop(k, None)
+                self.resume_map[k] = int(pos)               # newest last
+                dirty = True
+        elif pos >= length - RESUME_EDGE[1] and k in self.resume_map:   # played to the end: forget it
+            del self.resume_map[k]
+            dirty = True
+        if dirty and (force or time.time() - self.resume_saved >= 5.0):
+            self.resume_saved = time.time()
+            try:
+                os.makedirs(os.path.dirname(RESUME_STATE), exist_ok=True)
+                keep = dict(list(self.resume_map.items())[-50:])
+                tmp = RESUME_STATE + ".tmp"
+                with open(tmp, "w") as fh:
+                    json.dump(keep, fh)
+                os.replace(tmp, RESUME_STATE)
+            except OSError as e:
+                dbg("resume state not saved:", e)
+
     def load(self, start=0.0, paused=False, announce=True):
         f = self.current()
         if not f:
             self.say(f"No videos in {self.dir}", 3600000)
             return
+        self.note_position(force=True)              # where the previous video was
+        resumed = 0.0
+        if start == 0 and announce:                  # a fresh start of a video: pick up where it was
+            resumed = start = self.resume_position(f)
+        self.pos_file = f
         self.last_pos, self.stall = None, 0
         self.length = None
         mode = "default"
@@ -1575,7 +1868,8 @@ class App:
         self.engine.load(f, start, paused, mode)
         if announce:
             self.say(f"{self.idx + 1}/{len(self.files)}  "
-                     f"{os.path.splitext(os.path.basename(f))[0]}", 2500)
+                     f"{os.path.splitext(os.path.basename(f))[0]}"
+                     + (f"  (resumed {hms(resumed)})" if resumed else ""), 2500)
 
     def advance(self, step):
         new = scan(self.dir)
@@ -1619,6 +1913,10 @@ class App:
         elif act == "fwd":
             self.engine.seek_rel(SEEK_SECONDS)
             self.say(f"+{SEEK_SECONDS}s", 800)
+        elif act == "subs":
+            if self.pattern < 0:
+                self.say(self.engine.sub_cycle() if self.engine.name == "vlc"
+                         else "Subtitles: HDMI only", 2500)
         elif act in ("vol_up", "vol_down", "mute"):
             if act == "mute":
                 self.muted = not self.muted
@@ -1887,8 +2185,13 @@ class App:
                         dbg("housekeeping I/O error:", e)
         finally:
             self.info.close()
+            try:
+                self.note_position(force=True)
+            except Exception:
+                pass
             self.stop_engine()
             self.lease.release()            # desktop back (no-op if not held)
+            self.usb.close()
         return 0
 
     def hold_splash(self, end):
@@ -1931,7 +2234,32 @@ class App:
             else:
                 self.quitting = True
 
+    def usb_changed(self):
+        """A drive with videos came or went: switch the playlist."""
+        if self.pattern >= 0:                     # (try again when the pattern is switched off)
+            return
+        self.usb_seen = self.dir
+        self.files = scan(self.dir)
+        self.idx = 0
+        if self.usb.dir:
+            self.say("USB drive: " + self.usb.label, 3000)
+        if self.files:
+            if self.engine:
+                self.load()
+            else:
+                self.info.close()
+                if not self.open_output():
+                    self.quitting = True
+                    return
+                self.load()
+        elif self.engine:
+            self.stop_engine()                    # nothing left to play: back to the empty page
+
     def housekeeping(self, tick):
+        if tick % 2 == 0 and self.use_usb:
+            self.usb.refresh()
+        if self.dir != self.usb_seen:
+            self.usb_changed()
         if tick % 5 == 0:
             self.kbd.rescan()
         if self.engine and not self.engine.alive():          # player died by itself
@@ -1958,6 +2286,7 @@ class App:
         if self.engine:
             self.handle(self.engine.poll())
         self.watchdog()
+        self.note_position()
         self.update_info()
         if self.engine and self.output == "hdmi" and not hdmi_connected():
             self.switch_output("lcd", note="HDMI unplugged: LCD")
@@ -2064,7 +2393,7 @@ def main():
         directory = os.path.dirname(first)
     else:
         directory = os.path.abspath(arg) if arg else os.path.expanduser("~/Videos")
-    return App(directory, first, start, output).run()
+    return App(directory, first, start, output, use_usb=not arg).run()
 
 
 if __name__ == "__main__":

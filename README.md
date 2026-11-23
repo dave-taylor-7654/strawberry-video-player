@@ -25,11 +25,16 @@ Runs on the CardputerZero (Raspberry Pi CM0, Debian 13 arm64), with no network n
 | s / d | volume down / up |
 | a | mute |
 | l | loop one / loop all |
+| p | subtitles on HDMI: off, then each embedded track (the LCD note names the language) |
 | 1-8 | display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9 |
 | h | help (on the LCD while HDMI plays) |
 | t | test patterns on HDMI on / off; z x c f choose the pattern: color bars, gray steps, geometry, convergence, audio + sync |
 | i | HDMI diagnostics on the LCD: display name, mode, color range, audio, link, CEC address |
 | Esc | quit |
+
+## USB drives
+
+Plug in a USB drive (FAT32, exFAT, NTFS or ext4) and its videos play: from a folder named `Videos` on the drive, or from the top level if there is no such folder. Take the drive out and the player goes back to `~/Videos`. The drive is mounted read-only, and nothing is written to it or copied to the card. With no drive and no videos in `~/Videos`, the LCD says so.
 
 ## Smooth HDMI
 
@@ -37,8 +42,8 @@ Nothing to set up on the stock CardputerZero image. For full-screen 1080p the pl
 
 ## Build and install
 
-    dpkg-deb --build --root-owner-group . strawberry-video-player_2.7.11_all.deb
-    sudo dpkg -i strawberry-video-player_2.7.11_all.deb
+    dpkg-deb --build --root-owner-group . strawberry-video-player_2.7.14_all.deb
+    sudo dpkg -i strawberry-video-player_2.7.14_all.deb
 
 Run it from the launcher, or `strawberry-video-player [DIR|FILE] [--start MM:SS] [--output lcd|hdmi]`.
 

@@ -24,6 +24,7 @@ Keys (Cardputer keyboard, or any attached USB keyboard)
   s / d             volume down / up
   a                 mute
   l                 loop one / loop all
+  p                 subtitles on HDMI: off, then each embedded track
   1-8               display aspect ratio: 16:9, 16:10, 4:3, 5:4, 1:1, 2.35:1, 2.21:1, 21:9
   h                 help (on the LCD while HDMI plays)
   t                 test patterns on HDMI on / off; z x c f choose the pattern: color bars,
@@ -51,6 +52,15 @@ Usage
   strawberry-video-player              play ~/Videos
   strawberry-video-player DIR          play DIR
   strawberry-video-player FILE         play FILE's folder, starting at FILE
+
+USB drives
+  Plug in a USB drive (FAT32, exFAT, NTFS or ext4) and the videos on it play, from
+  a folder named Videos on the drive or else from its top level. Remove the drive
+  and playback returns to ~/Videos. The player mounts the drive itself (the desktop
+  is stopped while HDMI plays), read-only with nosuid, nodev and noexec, under
+  /media/strawberry-video-player, using udisks or the stock image's passwordless
+  sudo ("sudo -n mount" and "sudo -n umount", nothing else). It unmounts the drive
+  when it is removed and when the player quits. Nothing is written to the drive.
 
 How HDMI works
   Preferred: VLC with Raspberry Pi's DRM video output. For files the Pi's hardware
